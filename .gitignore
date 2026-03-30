@@ -1,1 +1,22 @@
 .aider*
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode and cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables and sensitive configuration files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+secrets.ini
+config.ini
+*.key
+*.pem
