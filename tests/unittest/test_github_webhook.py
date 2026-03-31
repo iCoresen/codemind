@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
+import app.tasks
 from app.github_webhook import router, extract_pr_event
 from fastapi import FastAPI
 
@@ -41,13 +42,11 @@ def test_github_webhook_duplicate(mock_redis_set, mock_verify):
     assert res.json() == {"accepted": True, "reason": "Duplicate webhook running or already processed"}
 
 @patch("app.github_webhook.verify_signature")
-@patch("app.github_webhook.redis_client.delete", new_callable=AsyncMock)
 @patch("app.github_webhook.redis_client.set", new_callable=AsyncMock)
-@patch("app.github_webhook.PRReviewer")
-def test_github_webhook_success(mock_pr_reviewer, mock_redis_set, mock_redis_delete, mock_verify):
+@patch("app.tasks.process_pr_review.delay")
+def test_github_webhook_success(mock_process_delay, mock_redis_set, mock_verify):
     mock_verify.return_value = True
     mock_redis_set.return_value = True  # Lock acquired
-    mock_pr_reviewer.return_value.run = AsyncMock()
     
     body = {
         "action": "opened",

@@ -4,12 +4,11 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, Header, HTTPException, Request
 import redis.asyncio as redis
 
-
 from app.config import load_settings
-from app.tools.pr_reviewer import PRReviewer
+from app.tasks import process_pr_review
 
 logger = logging.getLogger("codemind.webhook")
 router = APIRouter()
@@ -60,7 +59,6 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
 @router.post("/api/v1/github/webhook")
 async def github_webhook(
     request: Request,
-    background_tasks: BackgroundTasks,
     x_github_event: str = Header(default=""),
     x_hub_signature_256: str | None = Header(default=None),
     x_github_delivery: str | None = Header(default=None),
@@ -98,19 +96,9 @@ async def github_webhook(
 
     logger.info("Processing event payload: %s", event_payload)
     
-    # 构建 Reviewer 实例
-    reviewer = PRReviewer(settings, event_payload)
     
-    async def process_and_unlock():
-        try:
-            await reviewer.run()
-        except Exception as e:
-            logger.error("Failed to process PR Review: %s", e)
-        finally:
-            # 无论成功或失败都释放锁，避免永远等待 10 分钟 (如果在 10 分钟内跑完)
-            aw_del = getattr(redis_client, 'delete', None)
-            if aw_del:
-                await redis_client.delete(lock_key)
+    # 调用 Celery 任务，将含有 payload 和 锁信息 的字典推入队列
+    event_payload["lock_key"] = lock_key
+    process_pr_review.delay(event_payload)
 
-    background_tasks.add_task(process_and_unlock)
-    return {"accepted": True, "message": "PR review deferred to background task"}
+    return {"accepted": True, "message": "PR review deferred to background task via Celery"}

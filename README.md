@@ -89,7 +89,13 @@ make cli
 
 ## 运行方式二：Webhook 服务触发
 
-1. 启动 API：
+1. 启动 Redis 服务并启动 Celery Worker:
+由于现在的 Webhook 处理采用了 Celery 异步队列结构，你需要一个运行中的 Redis 和 Celery Worker：
+```bash
+make celery
+```
+
+2. 启动 API：
 
 ```bash
 python -m app.main
@@ -101,7 +107,7 @@ python -m app.main
 make api
 ```
 
-2. 健康检查：
+3. 健康检查：
 
 ```bash
 curl http://127.0.0.1:8080/healthz

@@ -16,7 +16,8 @@ def settings():
         github_webhook_secret="fake_secret",
         server_host="0.0.0.0",
         server_port=8080,
-        log_level="INFO"
+        log_level="INFO",
+            redis_url="redis://localhost:6379/0"
     )
 
 @pytest.fixture
