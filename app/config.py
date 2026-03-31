@@ -17,6 +17,7 @@ class Settings:
     server_host: str
     server_port: int
     log_level: str
+    redis_url: str
 
 def load_settings() -> Settings:
     return Settings(
@@ -30,4 +31,5 @@ def load_settings() -> Settings:
         server_host=os.getenv("SERVER_HOST", "0.0.0.0"),
         server_port=int(os.getenv("SERVER_PORT", "8080")),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
+        redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
     )
