@@ -1,5 +1,6 @@
 import logging
 import yaml
+import asyncio
 from pathlib import Path
 # 将 PR 的具体数据（如标题、分支、描述、代码差异）动态注入到从 TOML 文件中读取的 Prompt 模板中
 from jinja2 import Template
@@ -41,40 +42,67 @@ class PRReviewer:
         diff = self.github.get_pr_diff(owner, repo, pr_number)
 
         # 3. Load & Render Prompts
-        prompt_path = Path(__file__).parent / "prompts" / "review_prompt.toml"
+        prompts_dir = Path(__file__).parent / "prompts"
+        agent_names = ["security", "performance", "style"]
+        tasks = []
         
-        with open(prompt_path, "rb") as f:
-            prompts = tomllib.load(f)["pr_review_prompt"]
+        for name in agent_names:
+            path = prompts_dir / f"{name}_prompt.toml"
+            with open(path, "rb") as f:
+                prompts = tomllib.load(f)["pr_review_prompt"]
+                
+            system_prompt = prompts["system"]
+            user_prompt_template = Template(prompts["user"])
+            user_prompt = user_prompt_template.render(
+                title=title,
+                branch=branch,
+                description=description,
+                language="auto",
+                diff=diff[:max(0, 30000)]
+            )
+            tasks.append(self.ai.async_chat_completion(system_prompt, user_prompt))
 
-        system_prompt = prompts["system"]
-        user_prompt_template = Template(prompts["user"])
-        user_prompt = user_prompt_template.render(
-            title=title,
-            branch=branch,
-            description=description,
-            language="auto",
-            diff=diff[:max(0, 30000)] # avoid overly long diff exceeding context limit
+        # 4. Run Concurrent Reviews
+        logger.info("Executing concurrent reviews: Security, Performance, Style")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        security_res = results[0][0] if not isinstance(results[0], Exception) else str(results[0])
+        performance_res = results[1][0] if not isinstance(results[1], Exception) else str(results[1])
+        style_res = results[2][0] if not isinstance(results[2], Exception) else str(results[2])
+
+        # 5. Reducer Phase
+        logger.info("Summarizing results with Reducer Agent")
+        reducer_path = prompts_dir / "reducer_prompt.toml"
+        with open(reducer_path, "rb") as f:
+            reducer_prompts = tomllib.load(f)["pr_review_prompt"]
+        
+        r_system = reducer_prompts["system"]
+        r_user_template = Template(reducer_prompts["user"])
+        r_user = r_user_template.render(
+            security_report=security_res,
+            performance_report=performance_res,
+            style_report=style_res
         )
 
-        # 4 & 5. Get AI Review with Retry Mechanism
         max_retries = 3
         formatted_comment = ""
         
         for attempt in range(max_retries):
-            response_text, finish_reason = self.ai.chat_completion(system_prompt, user_prompt)
-            logger.info(f"AI response received (Attempt {attempt + 1}). Finish reason: {finish_reason}")
-            
+            # Using synchronous chat_completion for reducer or keep it async since we can await 
             try:
+                response_text, finish_reason = await self.ai.async_chat_completion(r_system, r_user)
+                logger.info(f"Reducer response received (Attempt {attempt + 1}). Finish reason: {finish_reason}")
+                
                 formatted_comment = self._format_review_comment(response_text, raise_on_fail=True)
-                break  # If successful, exit the retry loop
+                break
             except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed to parse YAML: {e}")
+                logger.warning(f"Attempt {attempt + 1} reducer failed: {e}")
                 if attempt == max_retries - 1:
-                    logger.error("Max retries reached. Falling back to raw AI response.")
-                    # Fallback to pure markdown raw response
-                    formatted_comment = f"## CodeMind PR Review (Raw)\n\n```yaml\n{response_text}\n```"
+                    logger.error("Max retries reached. Falling back to raw Reducer response.")
+                    raw_text = response_text if 'response_text' in locals() else str(e)
+                    formatted_comment = f"## CodeMind PR Review (Raw)\n\n```yaml\n{raw_text}\n```"
                 else:
-                    logger.info("Retrying AI completion...")
+                    logger.info("Retrying Reducer completion...")
 
         # 6. Publish Comment
         self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
@@ -100,17 +128,24 @@ class PRReviewer:
                     break
             
             issues = parsed.get("key_issues_to_review", [])
-            security = parsed.get("security_concerns", "None")
+            security = parsed.get("security_concerns", "无")
+            performance = parsed.get("performance_concerns", "无")
+            style = parsed.get("style_concerns", "无")
+            summary = parsed.get("summary", "")
             
             md = f"## CodeMind PR Review\n\n"
-            md += f"**Estimated Effort:** {effort}/5\n\n"
+            if summary:
+                md += f"{summary}\n\n"
+            md += f"**得分 (Estimated Effort):** {effort}/5\n\n"
             
             if issues:
-                md += "### Key Issues\n"
+                md += "### 主要问题 (Key Issues)\n"
                 for issue in issues:
                     md += f"- {issue}\n"
             
-            md += f"\n### Security Concerns\n{security}\n"
+            md += f"\n### 安全隐患 (Security Concerns)\n{security}\n"
+            md += f"\n### 性能问题 (Performance Concerns)\n{performance}\n"
+            md += f"\n### 代码规范 (Style Concerns)\n{style}\n"
             return md
             
         except Exception as e:
