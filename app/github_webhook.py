@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
 
 from app.config import load_settings
 from app.tools.pr_reviewer import PRReviewer
@@ -53,6 +53,7 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
 @router.post("/api/v1/github/webhook")
 async def github_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_github_event: str = Header(default=""),
     x_hub_signature_256: str | None = Header(default=None),
     x_github_delivery: str | None = Header(default=None),
@@ -76,8 +77,8 @@ async def github_webhook(
 
     logger.info("[github_webhook] processing event payload=%s", event_payload)
     
-    # Process review locally
+    # Process review locally in the background so GitHub gets immediate response
     reviewer = PRReviewer(settings, event_payload)
-    await reviewer.run()
+    background_tasks.add_task(reviewer.run)
 
     return {"accepted": True}

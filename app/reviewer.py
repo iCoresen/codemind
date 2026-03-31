@@ -31,7 +31,7 @@ class PRReviewer:
         logger.info(f"Starting review for {owner}/{repo}#{pr_number}")
 
         # 1. Get PR Info
-        pr_info = self.github.get_pr_info(owner, repo, pr_number)
+        pr_info = await self.github.get_pr_info(owner, repo, pr_number)
         title = pr_info.get("title", "")
         description = pr_info.get("body", "") or ""
         head_ref = pr_info.get("head", {}).get("ref", "") # 原分支
@@ -39,7 +39,7 @@ class PRReviewer:
         branch = f"{base_ref} -> {head_ref}" # 分支合并方向
 
         # 2. Get Diff
-        diff = self.github.get_pr_diff(owner, repo, pr_number)
+        diff = await self.github.get_pr_diff(owner, repo, pr_number)
 
         # 3. Load & Render Prompts
         prompts_dir = Path(__file__).parent / "prompts"
@@ -105,7 +105,7 @@ class PRReviewer:
                     logger.info("Retrying Reducer completion...")
 
         # 6. Publish Comment
-        self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
+        await self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
         logger.info(f"Review comment published for {owner}/{repo}#{pr_number}")
 
 

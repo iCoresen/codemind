@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from app.config import Settings
 from app.tools.pr_reviewer import PRReviewer
@@ -42,15 +42,16 @@ def pr_reviewer(settings, event_payload):
 async def test_run_multi_agent_concurrency(mock_github_client, mock_ai_handler, mock_template, mock_tomllib, settings, event_payload):
     # Mocking GitHub API
     mock_gh_instance = mock_github_client.return_value
-    mock_gh_instance.get_pr_info.return_value = {
+    mock_gh_instance.get_pr_info = AsyncMock(return_value={
         "title": "Fix bug",
         "body": "Fix off by one error",
         "head": {"ref": "fix-branch"},
         "base": {"ref": "main"}
-    }
-    mock_gh_instance.list_pr_files.return_value = [
+    })
+    mock_gh_instance.list_pr_files = AsyncMock(return_value=[
         {"filename": "test.py", "patch": "- old\n+ new"}
-    ]
+    ])
+    mock_gh_instance.publish_pr_comment = AsyncMock()
     
     # Mocking AI Async Task (Gather)
     mock_ai_instance = mock_ai_handler.return_value

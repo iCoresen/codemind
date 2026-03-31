@@ -4,17 +4,17 @@ from typing import Any
 
 class GitProvider(ABC):
     @abstractmethod
-    def list_pr_files(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
+    async def list_pr_files(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
         pass
 
     @abstractmethod
-    def get_pr_info(self, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
+    async def get_pr_info(self, owner: str, repo: str, pr_number: int) -> dict[str, Any]:
         pass
 
     @abstractmethod
-    def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
+    async def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         pass
 
     @abstractmethod
-    def publish_pr_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
+    async def publish_pr_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         pass
