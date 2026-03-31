@@ -46,7 +46,9 @@ async def test_run_multi_agent_concurrency(mock_github_client, mock_ai_handler, 
         "head": {"ref": "fix-branch"},
         "base": {"ref": "main"}
     }
-    mock_gh_instance.get_pr_diff.return_value = "- old\n+ new"
+    mock_gh_instance.list_pr_files.return_value = [
+        {"filename": "test.py", "patch": "- old\n+ new"}
+    ]
     
     # Mocking AI Async Task (Gather)
     mock_ai_instance = mock_ai_handler.return_value
@@ -85,7 +87,7 @@ async def test_run_multi_agent_concurrency(mock_github_client, mock_ai_handler, 
     
     # Verify GitHub info was pulled
     mock_gh_instance.get_pr_info.assert_called_once_with("test_owner", "test_repo", 42)
-    mock_gh_instance.get_pr_diff.assert_called_once_with("test_owner", "test_repo", 42)
+    mock_gh_instance.list_pr_files.assert_called_once_with("test_owner", "test_repo", 42)
     
     # Reviewer runs 3 concurrent expert prompts + 1 reducer prompt = 4 AI calls total
     assert mock_ai_instance.async_chat_completion.call_count == 4

@@ -8,6 +8,7 @@ from jinja2 import Template
 from app.config import Settings
 from app.git_providers.github_provider import GitHubProvider
 from app.ai_handlers.litellm_ai_handler import LiteLLMAIHandler 
+from app.algo.pr_processing import process_pr_files
 
 try:
     import tomllib
@@ -38,8 +39,9 @@ class PRReviewer:
         base_ref = pr_info.get("base", {}).get("ref", "") # 目标分支
         branch = f"{base_ref} -> {head_ref}" # 分支合并方向
 
-        # 2. Get Diff
-        diff = self.github.get_pr_diff(owner, repo, pr_number)
+        # 2. Get Diff iteratively and format it semantically
+        pr_files = self.github.list_pr_files(owner, repo, pr_number)
+        diff = process_pr_files(pr_files)
 
         # 3. Load & Render Prompts
         prompts_dir = Path(__file__).parent.parent / "prompts"
