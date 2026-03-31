@@ -8,8 +8,10 @@ from app.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 def settings():
     return Settings(
         github_token="fake_token",
-        deepseek_api_key="fake_key",
-        deepseek_model="fake_model",
+        ai_api_key="fake_key",
+        ai_model="fake_model",
+        ai_base_url="https://fake.api.com",
+        ai_fallback_models="fake_fallback",
         ai_timeout=30,
         github_webhook_secret="fake_secret",
         server_host="0.0.0.0",
@@ -22,8 +24,8 @@ def ai_handler(settings):
     return LiteLLMAIHandler(settings)
 
 def test_ai_handler_init(settings, ai_handler):
-    assert ai_handler.settings.deepseek_model == "fake_model"
-    assert os.environ.get("DEEPSEEK_API_KEY") == "fake_key"
+    assert ai_handler.settings.ai_model == "fake_model"
+    assert os.environ.get("LITELLM_API_KEY") == "fake_key"
 
 @patch("app.ai_handlers.litellm_ai_handler.completion")
 def test_chat_completion(mock_completion, ai_handler):

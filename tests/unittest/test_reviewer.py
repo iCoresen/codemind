@@ -9,8 +9,10 @@ from app.tools.pr_reviewer import PRReviewer
 def settings():
     return Settings(
         github_token="fake_token",
-        deepseek_api_key="fake_key",
-        deepseek_model="fake_model",
+        ai_api_key="fake_key",
+        ai_model="fake_model",
+        ai_base_url="https://fake.api.com",
+        ai_fallback_models="fake_fallback",
         ai_timeout=30,
         github_webhook_secret="fake_secret",
         server_host="0.0.0.0",

@@ -12,7 +12,18 @@ logger = logging.getLogger("codemind.ai")
 class LiteLLMAIHandler(BaseAIHandler):
     def __init__(self, settings: Settings):
         self.settings = settings
-        os.environ["DEEPSEEK_API_KEY"] = settings.deepseek_api_key
+        if self.settings.ai_api_key:
+            os.environ["LITELLM_API_KEY"] = self.settings.ai_api_key
+
+    def _get_litellm_kwargs(self):
+        kwargs = {}
+        if self.settings.ai_base_url:
+            kwargs["api_base"] = self.settings.ai_base_url
+        if self.settings.ai_api_key:
+            kwargs["api_key"] = self.settings.ai_api_key
+        if self.settings.ai_fallback_models:
+            kwargs["fallbacks"] = [m.strip() for m in self.settings.ai_fallback_models.split(",") if m.strip()]
+        return kwargs
 
     def chat_completion(
         self, system: str, user: str, temperature: float = 0.2
@@ -23,11 +34,13 @@ class LiteLLMAIHandler(BaseAIHandler):
         ]
         
         try:
+            kwargs = self._get_litellm_kwargs()
             response = completion(
-                model=self.settings.deepseek_model,
+                model=self.settings.ai_model,
                 messages=messages,
                 temperature=temperature,
                 timeout=self.settings.ai_timeout,
+                **kwargs
             )
             content = response.choices[0].message.content
             finish_reason = response.choices[0].finish_reason
@@ -45,11 +58,13 @@ class LiteLLMAIHandler(BaseAIHandler):
         ]
         
         try:
+            kwargs = self._get_litellm_kwargs()
             response = await acompletion(
-                model=self.settings.deepseek_model,
+                model=self.settings.ai_model,
                 messages=messages,
                 temperature=temperature,
                 timeout=self.settings.ai_timeout,
+                **kwargs
             )
             content = response.choices[0].message.content
             finish_reason = response.choices[0].finish_reason
