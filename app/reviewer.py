@@ -1,24 +1,25 @@
 import logging
 import yaml
 from pathlib import Path
+# 将 PR 的具体数据（如标题、分支、描述、代码差异）动态注入到从 TOML 文件中读取的 Prompt 模板中
 from jinja2 import Template
 
 from app.config import Settings
 from app.github_client import GitHubClient
-from app.ai_handler import AIHandler
+from app.ai_handler import AIHandler 
 
 try:
     import tomllib
 except ImportError:
-    pass # we will assume python 3.11+ natively handles this
+    pass
 
 logger = logging.getLogger("codemind.reviewer")
 
 class PRReviewer:
     def __init__(self, settings: Settings, event_payload: dict):
         self.settings = settings
-        self.event_payload = event_payload
-        self.github = GitHubClient(settings.github_token)
+        self.event_payload = event_payload # extract_pr_event 得到
+        self.github = GitHubClient(settings.github_token) # 定义一个GithubClient实例
         self.ai = AIHandler(settings)
 
     async def run(self):
@@ -32,9 +33,9 @@ class PRReviewer:
         pr_info = self.github.get_pr_info(owner, repo, pr_number)
         title = pr_info.get("title", "")
         description = pr_info.get("body", "") or ""
-        head_ref = pr_info.get("head", {}).get("ref", "")
-        base_ref = pr_info.get("base", {}).get("ref", "")
-        branch = f"{base_ref} -> {head_ref}"
+        head_ref = pr_info.get("head", {}).get("ref", "") # 原分支
+        base_ref = pr_info.get("base", {}).get("ref", "") # 目标分支
+        branch = f"{base_ref} -> {head_ref}" # 分支合并方向
 
         # 2. Get Diff
         diff = self.github.get_pr_diff(owner, repo, pr_number)
@@ -55,20 +56,32 @@ class PRReviewer:
             diff=diff[:max(0, 30000)] # avoid overly long diff exceeding context limit
         )
 
-        # 4. Get AI Review
-        response_text, finish_reason = self.ai.chat_completion(system_prompt, user_prompt)
+        # 4 & 5. Get AI Review with Retry Mechanism
+        max_retries = 3
+        formatted_comment = ""
         
-        logger.info(f"AI response received. Finish reason: {finish_reason}")
-        
-        # 5. Format output
-        formatted_comment = self._format_review_comment(response_text)
+        for attempt in range(max_retries):
+            response_text, finish_reason = self.ai.chat_completion(system_prompt, user_prompt)
+            logger.info(f"AI response received (Attempt {attempt + 1}). Finish reason: {finish_reason}")
+            
+            try:
+                formatted_comment = self._format_review_comment(response_text, raise_on_fail=True)
+                break  # If successful, exit the retry loop
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed to parse YAML: {e}")
+                if attempt == max_retries - 1:
+                    logger.error("Max retries reached. Falling back to raw AI response.")
+                    # Fallback to pure markdown raw response
+                    formatted_comment = f"## CodeMind PR Review (Raw)\n\n```yaml\n{response_text}\n```"
+                else:
+                    logger.info("Retrying AI completion...")
 
         # 6. Publish Comment
         self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
         logger.info(f"Review comment published for {owner}/{repo}#{pr_number}")
 
 
-    def _format_review_comment(self, ai_response: str) -> str:
+    def _format_review_comment(self, ai_response: str, raise_on_fail: bool = False) -> str:
         try:
             text_to_parse = ai_response.strip()
             if text_to_parse.startswith("```yaml"):
@@ -102,4 +115,7 @@ class PRReviewer:
             
         except Exception as e:
             logger.error(f"Failed to parse YAML response: {e}")
+            if raise_on_fail:
+                # 中断当前函数的执行，直接把这个异常重新抛给上一层的 try...except 块
+                raise e 
             return f"## CodeMind PR Review\n\n```yaml\n{ai_response}\n```"

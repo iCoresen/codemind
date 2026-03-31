@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 @dataclass(frozen=True)
 class Settings:
     github_webhook_secret: str
@@ -16,7 +15,6 @@ class Settings:
     server_host: str
     server_port: int
     log_level: str
-
 
 def load_settings() -> Settings:
     return Settings(

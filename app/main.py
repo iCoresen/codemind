@@ -6,7 +6,6 @@ from fastapi import FastAPI
 from app.config import load_settings
 from app.github_webhook import router as github_router
 
-
 def create_app() -> FastAPI:
     settings = load_settings()
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
@@ -20,9 +19,7 @@ def create_app() -> FastAPI:
 
     return app
 
-
 app = create_app()
-
 
 if __name__ == "__main__":
     settings = load_settings()

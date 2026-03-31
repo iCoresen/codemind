@@ -41,6 +41,7 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
     if not pr_number:
         return None
 
+    # 合格的 event_payload：owner, repo, pr_number, action
     return {
         "owner": owner,
         "repo": repo,
@@ -73,7 +74,7 @@ async def github_webhook(
     if x_github_delivery:
         event_payload["delivery_id"] = x_github_delivery
 
-    logger.info("processing event payload=%s", event_payload)
+    logger.info("[github_webhook] processing event payload=%s", event_payload)
     
     # Process review locally
     reviewer = PRReviewer(settings, event_payload)

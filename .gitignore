@@ -12,6 +12,7 @@ __pycache__/
 
 # Environment variables and sensitive configuration files
 .env
+.envrc
 .env.local
 .env.*.local
 .env.production
