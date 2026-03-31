@@ -1,9 +1,9 @@
 from typing import Any
-
 import requests
 
+from app.git_providers.git_provider import GitProvider
 
-class GitHubClient:
+class GitHubProvider(GitProvider):
     def __init__(self, token: str) -> None:
         self.token = token
 

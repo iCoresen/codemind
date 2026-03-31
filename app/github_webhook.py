@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.config import load_settings
-from app.reviewer import PRReviewer
+from app.tools.pr_reviewer import PRReviewer
 
 logger = logging.getLogger("codemind.webhook")
 router = APIRouter()

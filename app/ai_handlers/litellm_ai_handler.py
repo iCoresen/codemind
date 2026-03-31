@@ -5,10 +5,11 @@ from typing import Tuple
 from litellm import completion, acompletion
 
 from app.config import Settings
+from app.ai_handlers.base_ai_handler import BaseAIHandler
 
 logger = logging.getLogger("codemind.ai")
 
-class AIHandler:
+class LiteLLMAIHandler(BaseAIHandler):
     def __init__(self, settings: Settings):
         self.settings = settings
         os.environ["DEEPSEEK_API_KEY"] = settings.deepseek_api_key

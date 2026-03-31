@@ -4,7 +4,7 @@ import logging
 import sys
 
 from app.config import load_settings
-from app.reviewer import PRReviewer
+from app.tools.pr_reviewer import PRReviewer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("codemind.cli")

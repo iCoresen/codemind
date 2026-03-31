@@ -42,7 +42,7 @@ class PRReviewer:
         diff = self.github.get_pr_diff(owner, repo, pr_number)
 
         # 3. Load & Render Prompts
-        prompts_dir = Path(__file__).parent / "prompts"
+        prompts_dir = Path(__file__).parent.parent / "prompts"
         agent_names = ["security", "performance", "style"]
         tasks = []
         
