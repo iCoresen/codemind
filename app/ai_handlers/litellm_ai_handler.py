@@ -67,30 +67,6 @@ class LiteLLMAIHandler(BaseAIHandler):
             kwargs["fallbacks"] = fallbacks
         return kwargs
 
-    def chat_completion(
-        self, system: str, user: str, temperature: float = 0.2
-    ) -> Tuple[str, str]:
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
-        
-        try:
-            kwargs = self._get_litellm_kwargs()
-            response = completion(
-                model=self.settings.ai_model,
-                messages=messages,
-                temperature=temperature,
-                timeout=self.settings.ai_timeout,
-                **kwargs
-            )
-            content = response.choices[0].message.content
-            finish_reason = response.choices[0].finish_reason
-            return content, finish_reason
-        except Exception as e:
-            logger.error(f"Failed to generate completion: {e}")
-            raise AIProviderError(f"LiteLLM completion error: {e}") from e
-
     async def async_chat_completion(
         self, system: str, user: str, temperature: float = 0.2
     ) -> Tuple[str, str]:
@@ -114,3 +90,4 @@ class LiteLLMAIHandler(BaseAIHandler):
         except Exception as e:
             logger.error(f"Failed to generate async completion: {e}")
             raise AIProviderError(f"LiteLLM async completion error: {e}") from e
+
