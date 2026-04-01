@@ -6,6 +6,7 @@ from litellm import completion, acompletion
 
 from app.config import Settings
 from app.ai_handlers.base_ai_handler import BaseAIHandler
+from app.exceptions import AIProviderError
 
 logger = logging.getLogger("codemind.ai")
 
@@ -47,7 +48,7 @@ class LiteLLMAIHandler(BaseAIHandler):
             return content, finish_reason
         except Exception as e:
             logger.error(f"Failed to generate completion: {e}")
-            raise
+            raise AIProviderError(f"LiteLLM completion error: {e}") from e
 
     async def async_chat_completion(
         self, system: str, user: str, temperature: float = 0.2
@@ -71,4 +72,4 @@ class LiteLLMAIHandler(BaseAIHandler):
             return content, finish_reason
         except Exception as e:
             logger.error(f"Failed to generate async completion: {e}")
-            raise
+            raise AIProviderError(f"LiteLLM async completion error: {e}") from e

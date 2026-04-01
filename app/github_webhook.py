@@ -4,11 +4,12 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 import redis.asyncio as redis
 
 from app.config import load_settings
 from app.tasks import process_pr_review
+from app.exceptions import WebhookValidationError
 
 logger = logging.getLogger("codemind.webhook")
 router = APIRouter()
@@ -20,11 +21,13 @@ def verify_signature(raw_body: bytes, signature_256: str | None, secret: str) ->
     if not secret:
         return True
     if not signature_256 or not signature_256.startswith("sha256="):
-        return False
+        raise WebhookValidationError("Missing or invalid signature header")
 
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     received = signature_256.replace("sha256=", "", 1)
-    return hmac.compare_digest(expected, received)
+    if not hmac.compare_digest(expected, received):
+        raise WebhookValidationError("Signature verification failed")
+    return True
 
 
 def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
@@ -65,7 +68,10 @@ async def github_webhook(
 ):
     raw_body = await request.body()
 
-    if not verify_signature(raw_body, x_hub_signature_256, settings.github_webhook_secret):
+    try:
+        verify_signature(raw_body, x_hub_signature_256, settings.github_webhook_secret)
+    except WebhookValidationError as e:
+        logger.warning(f"Webhook signature validation failed: {e}")
         raise HTTPException(status_code=403, detail="invalid signature")
 
     try:

@@ -8,6 +8,7 @@ from jinja2 import Template
 from app.config import Settings
 from app.git_providers.github_provider import GitHubProvider
 from app.ai_handlers.litellm_ai_handler import LiteLLMAIHandler 
+from app.exceptions import GitHubAPIError, AIProviderError
 
 try:
     import tomllib
@@ -30,16 +31,20 @@ class PRReviewer:
 
         logger.info(f"Starting review for {owner}/{repo}#{pr_number}")
 
-        # 1. Get PR Info
-        pr_info = await self.github.get_pr_info(owner, repo, pr_number)
-        title = pr_info.get("title", "")
-        description = pr_info.get("body", "") or ""
-        head_ref = pr_info.get("head", {}).get("ref", "") # 原分支
-        base_ref = pr_info.get("base", {}).get("ref", "") # 目标分支
-        branch = f"{base_ref} -> {head_ref}" # 分支合并方向
+        try:
+            # 1. Get PR Info
+            pr_info = await self.github.get_pr_info(owner, repo, pr_number)
+            title = pr_info.get("title", "")
+            description = pr_info.get("body", "") or ""
+            head_ref = pr_info.get("head", {}).get("ref", "") # 原分支
+            base_ref = pr_info.get("base", {}).get("ref", "") # 目标分支
+            branch = f"{base_ref} -> {head_ref}" # 分支合并方向
 
-        # 2. Get Diff
-        diff = await self.github.get_pr_diff(owner, repo, pr_number)
+            # 2. Get Diff
+            diff = await self.github.get_pr_diff(owner, repo, pr_number)
+        except GitHubAPIError as e:
+            logger.error(f"Failed to fetch PR info/diff from GitHub: {e}")
+            raise
 
         # 3. Load & Render Prompts
         prompts_dir = Path(__file__).parent / "prompts"
@@ -66,9 +71,15 @@ class PRReviewer:
         logger.info("Executing concurrent reviews: Security, Performance, Style")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        security_res = results[0][0] if not isinstance(results[0], Exception) else str(results[0])
-        performance_res = results[1][0] if not isinstance(results[1], Exception) else str(results[1])
-        style_res = results[2][0] if not isinstance(results[2], Exception) else str(results[2])
+        def _get_result(res: any, name: str) -> str:
+            if isinstance(res, Exception):
+                logger.error(f"Task {name} failed: {res}")
+                return f"Error during {name} analysis: {str(res)}"
+            return res[0]
+
+        security_res = _get_result(results[0], "security")
+        performance_res = _get_result(results[1], "performance")
+        style_res = _get_result(results[2], "style")
 
         # 5. Reducer Phase
         logger.info("Summarizing results with Reducer Agent")
@@ -105,8 +116,12 @@ class PRReviewer:
                     logger.info("Retrying Reducer completion...")
 
         # 6. Publish Comment
-        await self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
-        logger.info(f"Review comment published for {owner}/{repo}#{pr_number}")
+        try:
+            await self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
+            logger.info(f"Review comment published for {owner}/{repo}#{pr_number}")
+        except GitHubAPIError as e:
+            logger.error(f"Failed to publish PR review comment for {owner}/{repo}#{pr_number}: {e}")
+            raise
 
 
     def _format_review_comment(self, ai_response: str, raise_on_fail: bool = False) -> str:

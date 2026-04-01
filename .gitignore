@@ -10,12 +10,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Pytest and coverage
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
 # Builds and packaging
 build/
 dist/

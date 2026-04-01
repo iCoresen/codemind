@@ -3,6 +3,7 @@ import logging
 from app.celery_app import celery_app
 from app.config import load_settings
 from app.tools.pr_reviewer import PRReviewer
+from app.exceptions import CodeMindError
 
 logger = logging.getLogger("codemind.tasks")
 
