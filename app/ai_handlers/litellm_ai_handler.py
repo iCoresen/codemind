@@ -15,6 +15,65 @@ class LiteLLMAIHandler(BaseAIHandler):
         self.settings = settings
         if self.settings.ai_api_key:
             os.environ["LITELLM_API_KEY"] = self.settings.ai_api_key
+            
+        self._cached_fallback_str = None
+        self._parsed_fallbacks = None
+
+    def _get_parsed_fallbacks(self):
+        current_str = self.settings.ai_fallback_models
+        if not current_str:
+            return None
+        
+        # 当配置的字符串发生变化时才重新解析
+        if current_str != self._cached_fallback_str:
+            self._parsed_fallbacks = self._parse_fallback_models(current_str)
+            self._cached_fallback_str = current_str
+            
+        return self._parsed_fallbacks
+
+    def _parse_fallback_models(self, fallback_models_str: str) -> list:
+        fallbacks = []
+        import json
+        
+        # 智能解析逗号分隔的字符串，处理 JSON 对象内部的逗号
+        parts = []
+        current_part = []
+        brace_count = 0
+        
+        for char in fallback_models_str:
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+            
+            if char == ',' and brace_count == 0:
+                # 不在 JSON 对象内部的逗号，分割点
+                parts.append(''.join(current_part).strip())
+                current_part = []
+            else:
+                current_part.append(char)
+        
+        # 添加最后一部分
+        if current_part:
+            parts.append(''.join(current_part).strip())
+        
+        # 处理每个部分
+        for part in parts:
+            if not part:
+                continue
+            
+            # 检查是否是 JSON 格式的字典配置
+            if part.startswith("{") and part.endswith("}"):
+                try:
+                    model_config = json.loads(part)
+                    fallbacks.append(model_config)
+                except json.JSONDecodeError:
+                    # 如果 JSON 解析失败，当作普通字符串处理
+                    fallbacks.append(part)
+            else:
+                fallbacks.append(part)
+        
+        return fallbacks
 
     def _get_litellm_kwargs(self):
         kwargs = {}
@@ -22,49 +81,10 @@ class LiteLLMAIHandler(BaseAIHandler):
             kwargs["api_base"] = self.settings.ai_base_url
         if self.settings.ai_api_key:
             kwargs["api_key"] = self.settings.ai_api_key
-        if self.settings.ai_fallback_models:
-            fallbacks = []
-            import json
             
-            # 智能解析逗号分隔的字符串，处理 JSON 对象内部的逗号
-            parts = []
-            current_part = []
-            brace_count = 0
-            
-            for char in self.settings.ai_fallback_models:
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                
-                if char == ',' and brace_count == 0:
-                    # 不在 JSON 对象内部的逗号，分割点
-                    parts.append(''.join(current_part).strip())
-                    current_part = []
-                else:
-                    current_part.append(char)
-            
-            # 添加最后一部分
-            if current_part:
-                parts.append(''.join(current_part).strip())
-            
-            # 处理每个部分
-            for part in parts:
-                if not part:
-                    continue
-                
-                # 检查是否是 JSON 格式的字典配置
-                if part.startswith("{") and part.endswith("}"):
-                    try:
-                        model_config = json.loads(part)
-                        fallbacks.append(model_config)
-                    except json.JSONDecodeError:
-                        # 如果 JSON 解析失败，当作普通字符串处理
-                        fallbacks.append(part)
-                else:
-                    fallbacks.append(part)
-            
-            kwargs["fallbacks"] = fallbacks
+        parsed_fallbacks = self._get_parsed_fallbacks()
+        if parsed_fallbacks:
+            kwargs["fallbacks"] = parsed_fallbacks
         return kwargs
 
     async def async_chat_completion(
