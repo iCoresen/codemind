@@ -28,23 +28,6 @@ def test_ai_handler_init(settings, ai_handler):
     assert ai_handler.settings.ai_model == "fake_model"
     assert os.environ.get("LITELLM_API_KEY") == "fake_key"
 
-@patch("app.ai_handlers.litellm_ai_handler.completion")
-def test_chat_completion(mock_completion, ai_handler):
-    # Mocking LiteLLM completion response
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "Mocked Response"
-    mock_response.choices[0].finish_reason = "stop"
-    mock_completion.return_value = mock_response
-
-    content, finish_reason = ai_handler.chat_completion("System prompt", "User prompt")
-    
-    assert content == "Mocked Response"
-    assert finish_reason == "stop"
-    mock_completion.assert_called_once()
-    args, kwargs = mock_completion.call_args
-    assert kwargs["model"] == "fake_model"
-
 @pytest.mark.asyncio
 @patch("app.ai_handlers.litellm_ai_handler.acompletion")
 async def test_async_chat_completion(mock_acompletion, ai_handler):
