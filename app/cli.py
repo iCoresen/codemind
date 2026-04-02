@@ -38,8 +38,8 @@ async def main():
             logger.error("GITHUB_TOKEN is not set.")
             sys.exit(1)
             
-        if not settings.deepseek_api_key:
-            logger.error("DEEPSEEK_API_KEY is not set.")
+        if not settings.ai_api_key:
+            logger.error("AI_API_KEY is not set.")
             sys.exit(1)
             
         try:

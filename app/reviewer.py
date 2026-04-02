@@ -136,36 +136,118 @@ class PRReviewer:
                 
             parsed = yaml.safe_load(text_to_parse)
             
-            effort = 0
-            for k, v in parsed.items():
-                if k.startswith("estimated_effort"):
-                    effort = v
-                    break
-            
-            issues = parsed.get("key_issues_to_review", [])
-            security = parsed.get("security_concerns", "无")
-            performance = parsed.get("performance_concerns", "无")
-            style = parsed.get("style_concerns", "无")
-            summary = parsed.get("summary", "")
-            
-            md = f"## CodeMind PR Review\n\n"
-            if summary:
-                md += f"{summary}\n\n"
-            md += f"**得分 (Estimated Effort):** {effort}/5\n\n"
-            
-            if issues:
-                md += "### 主要问题 (Key Issues)\n"
-                for issue in issues:
-                    md += f"- {issue}\n"
-            
-            md += f"\n### 安全隐患 (Security Concerns)\n{security}\n"
-            md += f"\n### 性能问题 (Performance Concerns)\n{performance}\n"
-            md += f"\n### 代码规范 (Style Concerns)\n{style}\n"
-            return md
-            
+            # 检查是否是新的final_review格式
+            if "final_review" in parsed:
+                review = parsed["final_review"]
+                pr_summary = review.get("pr_summary", {})
+                prioritized_issues = review.get("prioritized_issues", {})
+                metrics = review.get("metrics", {})
+                action_plan = review.get("action_plan", {})
+                executive_summary = review.get("executive_summary", "")
+                
+                md = f"## 🎯 CodeMind PR 综合审查报告\n\n"
+                
+                # PR摘要
+                md += f"### 📋 PR摘要\n"
+                md += f"- **标题**: {pr_summary.get('title', 'N/A')}\n"
+                md += f"- **分支**: {pr_summary.get('branch', 'N/A')}\n"
+                md += f"- **总体风险等级**: {pr_summary.get('overall_risk_level', 'N/A')}\n"
+                md += f"- **合并建议**: **{pr_summary.get('merge_recommendation', 'N/A')}**\n\n"
+                
+                # 执行摘要
+                if executive_summary:
+                    md += f"### 📊 执行摘要\n{executive_summary}\n\n"
+                
+                # 指标
+                md += f"### 📈 审查指标\n"
+                md += f"- **安全评分**: {metrics.get('security_score', 'N/A')}/100\n"
+                md += f"- **性能评分**: {metrics.get('performance_score', 'N/A')}/100\n"
+                md += f"- **代码质量评分**: {metrics.get('code_quality_score', 'N/A')}/100\n"
+                md += f"- **综合评分**: {metrics.get('overall_score', 'N/A')}/100\n"
+                md += f"- **审查工作量估计**: {metrics.get('estimated_review_effort', 'N/A')}/5\n\n"
+                
+                # 阻断性问题
+                blocker_issues = prioritized_issues.get("blocker_issues", [])
+                if blocker_issues:
+                    md += f"### 🚨 阻断性问题（必须立即修复）\n"
+                    for i, issue in enumerate(blocker_issues, 1):
+                        md += f"**{i}. {issue.get('category', '')} - {issue.get('description', '')}**\n"
+                        md += f"   - 严重性: {issue.get('severity', '')}\n"
+                        md += f"   - 影响文件: {', '.join(issue.get('files_affected', []))}\n"
+                        md += f"   - 立即行动: {issue.get('immediate_action', '')}\n"
+                        md += f"   - 预估修复时间: {issue.get('estimated_fix_time', '')}\n\n"
+                
+                # 高优先级问题
+                high_priority_issues = prioritized_issues.get("high_priority_issues", [])
+                if high_priority_issues:
+                    md += f"### ⚠️ 高优先级问题\n"
+                    for i, issue in enumerate(high_priority_issues, 1):
+                        md += f"**{i}. {issue.get('category', '')} - {issue.get('description', '')}**\n"
+                        md += f"   - 严重性: {issue.get('severity', '')}\n"
+                        md += f"   - 影响文件: {', '.join(issue.get('files_affected', []))}\n"
+                        md += f"   - 建议行动: {issue.get('recommended_action', '')}\n"
+                        md += f"   - 业务影响: {issue.get('business_impact', '')}\n\n"
+                
+                # 中优先级问题
+                medium_priority_issues = prioritized_issues.get("medium_priority_issues", [])
+                if medium_priority_issues:
+                    md += f"### 📝 中优先级问题\n"
+                    for i, issue in enumerate(medium_priority_issues, 1):
+                        md += f"{i}. {issue.get('category', '')} - {issue.get('description', '')}\n"
+                        md += f"   - 改进建议: {issue.get('improvement_suggestion', '')}\n\n"
+                
+                # 行动计划
+                md += f"### 🎯 行动计划\n"
+                immediate_actions = action_plan.get("immediate_actions", [])
+                if immediate_actions:
+                    md += f"**立即执行**:\n"
+                    for action in immediate_actions:
+                        md += f"- {action}\n"
+                
+                short_term_improvements = action_plan.get("short_term_improvements", [])
+                if short_term_improvements:
+                    md += f"\n**短期改进**:\n"
+                    for improvement in short_term_improvements:
+                        md += f"- {improvement}\n"
+                
+                long_term_considerations = action_plan.get("long_term_considerations", [])
+                if long_term_considerations:
+                    md += f"\n**长期考虑**:\n"
+                    for consideration in long_term_considerations:
+                        md += f"- {consideration}\n"
+                
+                return md
+            else:
+                # 向后兼容：处理旧的格式
+                effort = 0
+                for k, v in parsed.items():
+                    if k.startswith("estimated_effort"):
+                        effort = v
+                        break
+                
+                issues = parsed.get("key_issues_to_review", [])
+                security = parsed.get("security_concerns", "无")
+                performance = parsed.get("performance_concerns", "无")
+                style = parsed.get("style_concerns", "无")
+                summary = parsed.get("summary", "")
+                
+                md = f"## CodeMind PR Review\n\n"
+                if summary:
+                    md += f"{summary}\n\n"
+                md += f"**得分 (Estimated Effort):** {effort}/5\n\n"
+                
+                if issues:
+                    md += "### 主要问题 (Key Issues)\n"
+                    for issue in issues:
+                        md += f"- {issue}\n"
+                
+                md += f"\n### 安全隐患 (Security Concerns)\n{security}\n"
+                md += f"\n### 性能问题 (Performance Concerns)\n{performance}\n"
+                md += f"\n### 代码规范 (Style Concerns)\n{style}\n"
+                return md
+                
         except Exception as e:
             logger.error(f"Failed to parse YAML response: {e}")
             if raise_on_fail:
-                # 中断当前函数的执行，直接把这个异常重新抛给上一层的 try...except 块
                 raise e 
             return f"## CodeMind PR Review\n\n```yaml\n{ai_response}\n```"
