@@ -51,9 +51,8 @@ class PRReviewer:
         # 3. Load & Render Prompts
         prompts_dir = Path(__file__).parent.parent / "prompts"
         agent_names = ["security", "performance", "style"]
-        tasks = []
         
-        for name in agent_names:
+        async def run_agent(name: str, max_retries: int = 2) -> str:
             path = prompts_dir / f"{name}_prompt.toml"
             with open(path, "rb") as f:
                 prompts = tomllib.load(f)["pr_review_prompt"]
@@ -67,21 +66,30 @@ class PRReviewer:
                 language="auto",
                 diff=diff[:max(0, 30000)]
             )
-            tasks.append(self.ai.async_chat_completion(system_prompt, user_prompt))
+            
+            for attempt in range(max_retries):
+                try:
+                    response_text, _ = await self.ai.async_chat_completion(system_prompt, user_prompt)
+                    return response_text
+                except Exception as e:
+                    logger.warning(f"Task {name} attempt {attempt + 1} failed: {e}")
+                    if attempt == max_retries - 1:
+                        logger.error(f"Task {name} failed after {max_retries} attempts.")
+                        return f"Error during {name} analysis: {str(e)}"
+                    await asyncio.sleep(1)
+            return ""
 
         # 4. Run Concurrent Reviews
         logger.info("Executing concurrent reviews: Security, Performance, Style")
+        tasks = [run_agent(name) for name in agent_names]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        def _get_result(res: any, name: str) -> str:
-            if isinstance(res, Exception):
-                logger.error(f"Task {name} failed: {res}")
-                return f"Error during {name} analysis: {str(res)}"
-            return res[0]
-
-        security_res = _get_result(results[0], "security")
-        performance_res = _get_result(results[1], "performance")
-        style_res = _get_result(results[2], "style")
+        # 内存状态保存 (Memory State)
+        agent_results = {
+            "security": results[0] if not isinstance(results[0], Exception) else f"Error: {str(results[0])}",
+            "performance": results[1] if not isinstance(results[1], Exception) else f"Error: {str(results[1])}",
+            "style": results[2] if not isinstance(results[2], Exception) else f"Error: {str(results[2])}",
+        }
 
         # 5. Reducer Phase
         logger.info("Summarizing results with Reducer Agent")
@@ -92,9 +100,9 @@ class PRReviewer:
         r_system = reducer_prompts["system"]
         r_user_template = Template(reducer_prompts["user"])
         r_user = r_user_template.render(
-            security_report=security_res,
-            performance_report=performance_res,
-            style_report=style_res
+            security_report=agent_results["security"],
+            performance_report=agent_results["performance"],
+            style_report=agent_results["style"]
         )
 
         max_retries = 3
@@ -110,9 +118,19 @@ class PRReviewer:
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} reducer failed: {e}")
                 if attempt == max_retries - 1:
-                    logger.error("Max retries reached. Falling back to raw Reducer response.")
-                    raw_text = response_text if 'response_text' in locals() else str(e)
-                    formatted_comment = f"## CodeMind PR Review (Raw)\n\n```yaml\n{raw_text}\n```"
+                    logger.error("Max retries reached. Triggering ultimate fallback.")
+                    # Ultimate Fallback: return sub-agent content directly 
+                    fallback_content = (
+                        "## ⚠️ CodeMind PR Review (Fallback Mode)\n\n"
+                        "*Note: Reducer failed to format the final summary. Showing raw output from individual review layers.*\n\n"
+                        "### 🔒 Security Analysis\n"
+                        f"{agent_results['security']}\n\n"
+                        "### ⚡ Performance Analysis\n"
+                        f"{agent_results['performance']}\n\n"
+                        "### 🎨 Style Analysis\n"
+                        f"{agent_results['style']}\n"
+                    )
+                    formatted_comment = fallback_content
                 else:
                     logger.info("Retrying Reducer completion...")
 
@@ -176,7 +194,6 @@ class PRReviewer:
                         md += f"   - 严重性: {issue.get('severity', '')}\n"
                         md += f"   - 影响文件: {', '.join(issue.get('files_affected', []))}\n"
                         md += f"   - 立即行动: {issue.get('immediate_action', '')}\n"
-                        md += f"   - 预估修复时间: {issue.get('estimated_fix_time', '')}\n\n"
                 
                 # 高优先级问题
                 high_priority_issues = prioritized_issues.get("high_priority_issues", [])

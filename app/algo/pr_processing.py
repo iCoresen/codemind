@@ -1,5 +1,6 @@
 import re
 
+# 判断文件是否应该被忽略
 def is_generated_or_ignored_file(filename: str) -> bool:
     ignored_extensions = {
         ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".tar", ".gz",
@@ -16,6 +17,16 @@ def is_generated_or_ignored_file(filename: str) -> bool:
 
     return False
 
+# 软截断 diff，减少 token 与更为清晰的语义
+"""
+Git/Github的diff输出，hunk的格式
+@@ -1,4 +1,5 @@                                                                                                                                             
+ function hello() {                                                                                                                                         
+     console.log("Hello");                                                                                                                                  
++    console.log("World");  # 新增的行                                                                                                                      
+     return true;                                                                                                                                           
+ } 
+"""
 def clip_patch_to_hunks(patch: str, max_chars: int = 15000) -> str:
     """Soft truncate a patch but only at hunk boundaries to maintain diff structure."""
     if len(patch) <= max_chars:

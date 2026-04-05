@@ -17,7 +17,7 @@ def settings():
         server_host="0.0.0.0",
         server_port=8080,
         log_level="INFO",
-            redis_url="redis://localhost:6379/0"
+        redis_url="redis://localhost:6379/0"
     )
 
 @pytest.fixture

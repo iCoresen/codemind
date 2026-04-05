@@ -42,7 +42,6 @@ final_review:
         source_analysis: <来源分析报告>
         files_affected: [<文件列表>]
         immediate_action: <立即行动建议>
-        estimated_fix_time: <预估修复时间>
     high_priority_issues:
       - issue_id: <问题ID>
         category: <安全/性能/代码质量>
@@ -71,10 +70,10 @@ final_review:
       root_cause: <根本原因>
       holistic_solution: <整体解决方案>
   metrics:
-    security_score: <0-100>
-    performance_score: <0-100>
-    code_quality_score: <0-100>
-    overall_score: <0-100>
+    security_score: <0-10>
+    performance_score: <0-10>
+    code_quality_score: <0-10>
+    overall_score: <0-10>
     estimated_review_effort: <1-5>
   action_plan:
     immediate_actions: [<立即执行的动作>]
@@ -100,7 +99,6 @@ final_review:
         source_analysis: "安全分析报告第1个关键问题"
         files_affected: ["api/auth.py"]
         immediate_action: "使用参数化查询替换字符串拼接"
-        estimated_fix_time: "1小时"
     high_priority_issues:
       - issue_id: "PERF-001"
         category: "性能"
@@ -116,10 +114,10 @@ final_review:
       root_cause: "异常处理逻辑缺失"
       holistic_solution: "统一错误处理中间件"
   metrics:
-    security_score: 65
-    performance_score: 70
-    code_quality_score: 75
-    overall_score: 70
+    security_score: 6.5
+    performance_score: 7
+    code_quality_score: 7.5
+    overall_score: 7
     estimated_review_effort: 3
   action_plan:
     immediate_actions: ["修复SQL注入漏洞", "优化关键算法"]
