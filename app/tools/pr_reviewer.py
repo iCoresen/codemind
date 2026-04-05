@@ -149,23 +149,22 @@ class PRReviewer:
         desc = issue.get('description', '')
         file_path = issue.get('file', '')
         line = issue.get('line', '')
+        action = issue.get('immediate_action') or issue.get('recommended_action') or issue.get('improvement_suggestion')
         
         link = ""
         if file_path and line and head_sha:
             link = f"https://github.com/{owner}/{repo}/blob/{head_sha}/{file_path}#L{line}"
-            header = f"**<a href='{link}'>{title}</a>**"
+            header = f"<a href='{link}'><strong>{title}</strong></a>"
         elif file_path and head_sha:
             link = f"https://github.com/{owner}/{repo}/blob/{head_sha}/{file_path}"
-            header = f"**<a href='{link}'>{title}</a>**"
+            header = f"<a href='{link}'><strong>{title}</strong></a>"
         else:
-            header = f"**{title}**"
+            header = f"<strong>{title}</strong>"
             
-        md_part = f"{header}\n"
-        md_part += f"> {desc}\n>\n"
-        
-        action = issue.get('immediate_action') or issue.get('recommended_action') or issue.get('improvement_suggestion')
+        md_part = f"<details><summary>{header}</summary>\n\n> {desc}\n"
         if action:
-            md_part += f"> 💡 **建议修复**: {action}\n"
+            md_part += f">\n> 💡 **建议修复**: {action}\n"
+        md_part += "</details>\n"
             
         return md_part + "\n"
 
@@ -187,77 +186,71 @@ class PRReviewer:
                 pr_summary = review.get("pr_summary", {})
                 prioritized_issues = review.get("prioritized_issues", {})
                 metrics = review.get("metrics", {})
-                action_plan = review.get("action_plan", {})
                 executive_summary = review.get("executive_summary", "")
                 
-                md = f"## 🎯 CodeMind PR 综合审查报告\n\n"
-                
-                # PR摘要
-                md += f"### 📋 PR摘要\n"
-                md += f"- **标题**: {pr_summary.get('title', 'N/A')}\n"
-                md += f"- **分支**: {pr_summary.get('branch', 'N/A')}\n"
-                md += f"- **总体风险等级**: {pr_summary.get('overall_risk_level', 'N/A')}\n"
-                md += f"- **合并建议**: **{pr_summary.get('merge_recommendation', 'N/A')}**\n\n"
+                md = f"## CodeMind PR Reviewer Guide 🔍\n\n"
                 
                 # 执行摘要
                 if executive_summary:
-                    md += f"### 📊 执行摘要\n{executive_summary}\n\n"
+                    md += f"*{executive_summary}*\n\n---\n\n"
                 
-                # 指标
-                md += f"### 📈 审查指标\n"
-                md += f"- **安全评分**: {metrics.get('security_score', 'N/A')}/10\n"
-                md += f"- **性能评分**: {metrics.get('performance_score', 'N/A')}/10\n"
-                md += f"- **代码质量评分**: {metrics.get('code_quality_score', 'N/A')}/10\n"
-                md += f"- **综合评分**: {metrics.get('overall_score', 'N/A')}/10\n"
-                md += f"- **审查工作量估计**: {metrics.get('estimated_review_effort', 'N/A')}/5\n\n"
+                # 指标和快速概览
+                effort = metrics.get('estimated_review_effort', 2)
+                try:
+                    effort_int = int(effort)
+                except:
+                    effort_int = 2
+                blue_bars = '🔵' * effort_int
+                white_bars = '⚪' * (5 - effort_int)
                 
-                # 阻断性问题
+                md += f"⏱️ **Estimated effort to review:** {effort_int} {blue_bars}{white_bars}\n"
+                
+                security_score = metrics.get('security_score', 10)
+                try:
+                    sec_score = float(security_score)
+                    if sec_score >= 9:
+                        md += "🔒 **No security concerns identified**\n"
+                    else:
+                        md += "🔒 **Security concerns detected!** ⚠️\n"
+                except:
+                    pass
+                
+                md += "\n"
+                
+                # 获取阻断性问题
                 blocker_issues = prioritized_issues.get("blocker_issues", [])
+                
+                # 判断是否有 issues
+                has_issues = bool(blocker_issues or prioritized_issues.get("high_priority_issues") or prioritized_issues.get("medium_priority_issues"))
+                
+                if has_issues:
+                    md += "⚡ **Recommended focus areas for review**\n\n"
+                
                 if blocker_issues:
-                    md += f"### 🚨 阻断性问题（必须立即修复）\n<br>\n\n"
+                    md += f"#### 🚨 阻断性问题 (Blockers)\n"
                     for issue in blocker_issues:
                         md += self._format_issue_item(issue, owner, repo, head_sha)
                 
                 # 高优先级问题
                 high_priority_issues = prioritized_issues.get("high_priority_issues", [])
                 if high_priority_issues:
-                    md += f"### ⚠️ 高优先级问题\n<br>\n\n"
+                    md += f"#### ⚠️ 高优先级问题 (High Priority)\n"
                     for issue in high_priority_issues:
                         md += self._format_issue_item(issue, owner, repo, head_sha)
                 
                 # 中优先级问题
                 medium_priority_issues = prioritized_issues.get("medium_priority_issues", [])
                 if medium_priority_issues:
-                    md += f"### 📝 中优先级问题\n<br>\n\n"
+                    md += f"#### 📝 中优先级问题 (Medium Priority)\n"
                     for issue in medium_priority_issues:
                         md += self._format_issue_item(issue, owner, repo, head_sha)
                 
                 # 建议与低优先级
                 low_priority_suggestions = prioritized_issues.get("low_priority_suggestions", [])
                 if low_priority_suggestions:
-                    md += f"### 💡 低优先级建议\n<br>\n\n"
+                    md += f"#### 💡 代码建议 (Suggestions)\n"
                     for issue in low_priority_suggestions:
                         md += self._format_issue_item(issue, owner, repo, head_sha)
-                
-                # 行动计划
-                md += f"### 🎯 行动计划\n"
-                immediate_actions = action_plan.get("immediate_actions", [])
-                if immediate_actions:
-                    md += f"**立即执行**:\n"
-                    for action in immediate_actions:
-                        md += f"- {action}\n"
-                
-                short_term_improvements = action_plan.get("short_term_improvements", [])
-                if short_term_improvements:
-                    md += f"\n**短期改进**:\n"
-                    for improvement in short_term_improvements:
-                        md += f"- {improvement}\n"
-                
-                long_term_considerations = action_plan.get("long_term_considerations", [])
-                if long_term_considerations:
-                    md += f"\n**长期考虑**:\n"
-                    for consideration in long_term_considerations:
-                        md += f"- {consideration}\n"
                 
                 return md
             else:

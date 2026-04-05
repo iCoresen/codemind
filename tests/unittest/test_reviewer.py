@@ -113,7 +113,7 @@ key_issues_to_review:
   - "Unescaped user input"
 ```'''
     
-    formatted = pr_reviewer._format_review_comment(raw_response)
+    formatted = pr_reviewer._format_review_comment(raw_response, "test_owner", "test_repo", "fake_sha")
     
     assert "**得分 (Estimated Effort):** 3/5" in formatted
     assert "Overall good but has some logic issues." in formatted
@@ -124,4 +124,4 @@ key_issues_to_review:
     # Test failure mode
     bad_yaml = "not yaml format"
     with pytest.raises(Exception):
-        pr_reviewer._format_review_comment(bad_yaml, raise_on_fail=True)
+        pr_reviewer._format_review_comment(bad_yaml, "test_owner", "test_repo", "fake_sha", raise_on_fail=True)
