@@ -38,31 +38,38 @@ final_review:
       - issue_id: <问题ID>
         category: <安全/性能/代码质量>
         severity: <阻断>
-        description: <问题描述>
-        source_analysis: <来源分析报告>
-        files_affected: [<文件列表>]
+        title: <问题简述/简短标题，例如"Syntax Error"或"SQL Injection">
+        description: <详细描述问题的成因和风险>
+        file: <问题所在的文件路径, 例如"src/main.py">
+        line: <问题发生的行号，例如 37>
         immediate_action: <立即行动建议>
     high_priority_issues:
       - issue_id: <问题ID>
         category: <安全/性能/代码质量>
         severity: <高>
-        description: <问题描述>
-        source_analysis: <来源分析报告>
-        files_affected: [<文件列表>]
+        title: <问题简述/简短标题>
+        description: <详细描述>
+        file: <问题所在的文件路径>
+        line: <问题发生的行号>
         recommended_action: <建议行动>
         business_impact: <业务影响>
     medium_priority_issues:
       - issue_id: <问题ID>
         category: <安全/性能/代码质量>
         severity: <中>
-        description: <问题描述>
-        source_analysis: <来源分析报告>
+        title: <问题简述/简短标题>
+        description: <详细描述>
+        file: <问题所在的文件路径>
+        line: <问题发生的行号>
         improvement_suggestion: <改进建议>
     low_priority_suggestions:
       - issue_id: <问题ID>
         category: <安全/性能/代码质量>
         severity: <低>
+        title: <建议的简短标题>
         description: <建议描述>
+        file: <相关的部分文件路径>
+        line: <相关的行号>
         benefit: <收益说明>
   cross_cutting_concerns:
     - concern: <跨领域问题>
@@ -95,18 +102,20 @@ final_review:
       - issue_id: "SEC-001"
         category: "安全"
         severity: "阻断"
-        description: "SQL注入漏洞：用户输入直接拼接到查询"
-        source_analysis: "安全分析报告第1个关键问题"
-        files_affected: ["api/auth.py"]
+        title: "SQL Injection Vulnerability"
+        description: "用户输入直接拼接到查询字符串，未进行任何过滤或转义，存在极高的导致数据库被拖库的风险。"
+        file: "api/auth.py"
+        line: 45
         immediate_action: "使用参数化查询替换字符串拼接"
     high_priority_issues:
       - issue_id: "PERF-001"
         category: "性能"
         severity: "高"
-        description: "O(n²)算法导致性能瓶颈"
-        source_analysis: "性能分析报告第1个关键瓶颈"
-        files_affected: ["services/data_processor.py"]
-        recommended_action: "使用哈希表优化算法复杂度"
+        title: "O(n²) Algorithm Complexity"
+        description: "在数据处理模块中嵌套循环导致O(n²)的时间复杂度，在数据量变大时会导致系统超时。"
+        file: "services/data_processor.py"
+        line: 112
+        recommended_action: "使用哈希表优化算法复杂度至O(n)"
         business_impact: "用户量增长时响应时间会显著增加"
   cross_cutting_concerns:
     - concern: "错误处理不完整"

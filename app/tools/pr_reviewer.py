@@ -38,6 +38,7 @@ class PRReviewer:
             title = pr_info.get("title", "")
             description = pr_info.get("body", "") or ""
             head_ref = pr_info.get("head", {}).get("ref", "") # 原分支
+            head_sha = pr_info.get("head", {}).get("sha", "") # 原分支sha
             base_ref = pr_info.get("base", {}).get("ref", "") # 目标分支
             branch = f"{base_ref} -> {head_ref}" # 分支合并方向
 
@@ -113,7 +114,7 @@ class PRReviewer:
                 response_text, finish_reason = await self.ai.async_chat_completion(r_system, r_user)
                 logger.info(f"Reducer response received (Attempt {attempt + 1}). Finish reason: {finish_reason}")
                 
-                formatted_comment = self._format_review_comment(response_text, raise_on_fail=True)
+                formatted_comment = self._format_review_comment(response_text, owner, repo, head_sha, raise_on_fail=True)
                 break
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} reducer failed: {e}")
@@ -143,7 +144,32 @@ class PRReviewer:
             raise
 
 
-    def _format_review_comment(self, ai_response: str, raise_on_fail: bool = False) -> str:
+    def _format_issue_item(self, issue: dict, owner: str, repo: str, head_sha: str) -> str:
+        title = issue.get('title') or issue.get('description', '')[:20]
+        desc = issue.get('description', '')
+        file_path = issue.get('file', '')
+        line = issue.get('line', '')
+        
+        link = ""
+        if file_path and line and head_sha:
+            link = f"https://github.com/{owner}/{repo}/blob/{head_sha}/{file_path}#L{line}"
+            header = f"**<a href='{link}'>{title}</a>**"
+        elif file_path and head_sha:
+            link = f"https://github.com/{owner}/{repo}/blob/{head_sha}/{file_path}"
+            header = f"**<a href='{link}'>{title}</a>**"
+        else:
+            header = f"**{title}**"
+            
+        md_part = f"{header}\n"
+        md_part += f"> {desc}\n>\n"
+        
+        action = issue.get('immediate_action') or issue.get('recommended_action') or issue.get('improvement_suggestion')
+        if action:
+            md_part += f"> 💡 **建议修复**: {action}\n"
+            
+        return md_part + "\n"
+
+    def _format_review_comment(self, ai_response: str, owner: str, repo: str, head_sha: str, raise_on_fail: bool = False) -> str:
         try:
             text_to_parse = ai_response.strip()
             if text_to_parse.startswith("```yaml"):
@@ -179,40 +205,39 @@ class PRReviewer:
                 
                 # 指标
                 md += f"### 📈 审查指标\n"
-                md += f"- **安全评分**: {metrics.get('security_score', 'N/A')}/100\n"
-                md += f"- **性能评分**: {metrics.get('performance_score', 'N/A')}/100\n"
-                md += f"- **代码质量评分**: {metrics.get('code_quality_score', 'N/A')}/100\n"
-                md += f"- **综合评分**: {metrics.get('overall_score', 'N/A')}/100\n"
+                md += f"- **安全评分**: {metrics.get('security_score', 'N/A')}/10\n"
+                md += f"- **性能评分**: {metrics.get('performance_score', 'N/A')}/10\n"
+                md += f"- **代码质量评分**: {metrics.get('code_quality_score', 'N/A')}/10\n"
+                md += f"- **综合评分**: {metrics.get('overall_score', 'N/A')}/10\n"
                 md += f"- **审查工作量估计**: {metrics.get('estimated_review_effort', 'N/A')}/5\n\n"
                 
                 # 阻断性问题
                 blocker_issues = prioritized_issues.get("blocker_issues", [])
                 if blocker_issues:
-                    md += f"### 🚨 阻断性问题（必须立即修复）\n"
-                    for i, issue in enumerate(blocker_issues, 1):
-                        md += f"**{i}. {issue.get('category', '')} - {issue.get('description', '')}**\n"
-                        md += f"   - 严重性: {issue.get('severity', '')}\n"
-                        md += f"   - 影响文件: {', '.join(issue.get('files_affected', []))}\n"
-                        md += f"   - 立即行动: {issue.get('immediate_action', '')}\n"
+                    md += f"### 🚨 阻断性问题（必须立即修复）\n<br>\n\n"
+                    for issue in blocker_issues:
+                        md += self._format_issue_item(issue, owner, repo, head_sha)
                 
                 # 高优先级问题
                 high_priority_issues = prioritized_issues.get("high_priority_issues", [])
                 if high_priority_issues:
-                    md += f"### ⚠️ 高优先级问题\n"
-                    for i, issue in enumerate(high_priority_issues, 1):
-                        md += f"**{i}. {issue.get('category', '')} - {issue.get('description', '')}**\n"
-                        md += f"   - 严重性: {issue.get('severity', '')}\n"
-                        md += f"   - 影响文件: {', '.join(issue.get('files_affected', []))}\n"
-                        md += f"   - 建议行动: {issue.get('recommended_action', '')}\n"
-                        md += f"   - 业务影响: {issue.get('business_impact', '')}\n\n"
+                    md += f"### ⚠️ 高优先级问题\n<br>\n\n"
+                    for issue in high_priority_issues:
+                        md += self._format_issue_item(issue, owner, repo, head_sha)
                 
                 # 中优先级问题
                 medium_priority_issues = prioritized_issues.get("medium_priority_issues", [])
                 if medium_priority_issues:
-                    md += f"### 📝 中优先级问题\n"
-                    for i, issue in enumerate(medium_priority_issues, 1):
-                        md += f"{i}. {issue.get('category', '')} - {issue.get('description', '')}\n"
-                        md += f"   - 改进建议: {issue.get('improvement_suggestion', '')}\n\n"
+                    md += f"### 📝 中优先级问题\n<br>\n\n"
+                    for issue in medium_priority_issues:
+                        md += self._format_issue_item(issue, owner, repo, head_sha)
+                
+                # 建议与低优先级
+                low_priority_suggestions = prioritized_issues.get("low_priority_suggestions", [])
+                if low_priority_suggestions:
+                    md += f"### 💡 低优先级建议\n<br>\n\n"
+                    for issue in low_priority_suggestions:
+                        md += self._format_issue_item(issue, owner, repo, head_sha)
                 
                 # 行动计划
                 md += f"### 🎯 行动计划\n"
