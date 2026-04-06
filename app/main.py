@@ -5,12 +5,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.config import load_settings
+from app.log_config import setup_logging
 from app.github_webhook import router as github_router
 from app.exceptions import CodeMindError
 
 def create_app() -> FastAPI:
     settings = load_settings()
-    logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+    setup_logging(settings, "fastapi")  # 设置统一日志，输出到 logs/fastapi.log
 
     app = FastAPI(title="CodeMind MVP", version="0.1.0")
     app.include_router(github_router)

@@ -58,15 +58,16 @@ mkdir -p logs
 
 echo ""
 echo "1. 启动Celery Worker..."
-# 使用 uv run 启动 celery (后台运行，日志输出到文件)
-nohup uv run celery -A app.celery_app worker --loglevel=info > logs/celery.log 2>&1 &
+# 应用内部已配置将日志定性输出到 logs/celery.log，这里将 stdout/stderr 写入 logs/celery_stdout.log 避免日志重复
+nohup uv run celery -A app.celery_app worker --loglevel=info > logs/celery_stdout.log 2>&1 &
 CELERY_PID=$!
 echo "✓ Celery Worker已启动 (PID: $CELERY_PID)"
 echo $CELERY_PID > logs/celery.pid
 
 echo ""
 echo "2. 启动FastAPI应用..."
-nohup uv run uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --log-level info --access-log > logs/fastapi.log 2>&1 &
+# 应用内部已配置将日志定性输出到 logs/fastapi.log，这里将 stdout/stderr 写入 logs/fastapi_stdout.log 避免日志重复
+nohup uv run uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --access-log > logs/fastapi_stdout.log 2>&1 &
 FASTAPI_PID=$!
 echo "✓ FastAPI应用已启动 (PID: $FASTAPI_PID)"
 echo $FASTAPI_PID > logs/fastapi.pid
@@ -125,9 +126,10 @@ echo "- 本地: curl http://localhost:8000/healthz"
 echo "- 公网: curl $NGROK_URL/healthz"
 echo ""
 echo "日志文件:"
-echo "- Celery日志:  logs/celery.log"
-echo "- FastAPI日志: logs/fastapi.log"
+echo "- Celery日志:  logs/celery.log      (任务运行日志)"
+echo "- FastAPI日志: logs/fastapi.log     (Web请求与路由日志)"
 echo "- ngrok日志:   logs/ngrok.log"
+echo "- 控制台输出:  logs/celery_stdout.log, logs/fastapi_stdout.log (崩溃或标准输出)"
 echo ""
 echo "停止所有服务: ./scripts/stop_all.sh"
 echo "========================================"
