@@ -17,7 +17,13 @@ def settings():
         server_host="0.0.0.0",
         server_port=8080,
         log_level="INFO",
-        redis_url="redis://localhost:6379/0"
+        redis_url="redis://localhost:6379/0",
+        changelog_soft_timeout=5,
+        changelog_hard_timeout=10,
+        logic_soft_timeout=15,
+        logic_hard_timeout=25,
+        unittest_soft_timeout=20,
+        unittest_hard_timeout=30,
     )
 
 @pytest.fixture

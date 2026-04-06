@@ -18,6 +18,12 @@ class Settings:
     server_port: int
     log_level: str
     redis_url: str
+    changelog_soft_timeout: float
+    changelog_hard_timeout: float
+    logic_soft_timeout: float
+    logic_hard_timeout: float
+    unittest_soft_timeout: float
+    unittest_hard_timeout: float
 
 def load_settings() -> Settings:
     return Settings(
@@ -32,4 +38,10 @@ def load_settings() -> Settings:
         server_port=int(os.getenv("SERVER_PORT", "8080")),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+        changelog_soft_timeout=float(os.getenv("CHANGELOG_SOFT_TIMEOUT", "5.0")),
+        changelog_hard_timeout=float(os.getenv("CHANGELOG_HARD_TIMEOUT", "10.0")),
+        logic_soft_timeout=float(os.getenv("LOGIC_SOFT_TIMEOUT", "15.0")),
+        logic_hard_timeout=float(os.getenv("LOGIC_HARD_TIMEOUT", "25.0")),
+        unittest_soft_timeout=float(os.getenv("UNITTEST_SOFT_TIMEOUT", "30.0")),
+        unittest_hard_timeout=float(os.getenv("UNITTEST_HARD_TIMEOUT", "45.0")),
     )

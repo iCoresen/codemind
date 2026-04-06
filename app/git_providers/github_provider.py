@@ -142,6 +142,61 @@ class GitHubProvider(GitProvider):
         except Exception as e:
             raise GitHubAPIError(f"Error updating PR comment: {e}") from e
 
+    async def get_pr_commits(self, owner: str, repo: str, pr_number: int) -> list[dict]:
+        """获取 PR 的 commit 列表
+        
+        Args:
+            owner: 仓库所有者
+            repo: 仓库名称
+            pr_number: PR 编号
+            
+        Returns:
+            commit 列表，每项包含 sha, message, author 等信息
+        """
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/commits"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=self._headers(), timeout=20.0)
+                resp.raise_for_status()
+                commits = resp.json()
+                return [
+                    {
+                        "sha": c.get("sha", "")[:8],
+                        "message": c.get("commit", {}).get("message", ""),
+                        "author": c.get("commit", {}).get("author", {}).get("name", ""),
+                    }
+                    for c in commits
+                ]
+        except httpx.HTTPStatusError as e:
+            raise GitHubAPIError(f"HTTPStatusError getting PR commits: {e.response.status_code} - {e.response.text}") from e
+        except Exception as e:
+            raise GitHubAPIError(f"Error getting PR commits: {e}") from e
+
+    async def get_file_content(self, owner: str, repo: str, path: str, ref: str) -> str:
+        """获取指定 ref（分支/commit SHA）下的文件内容
+        
+        Args:
+            owner: 仓库所有者
+            repo: 仓库名称
+            path: 文件路径
+            ref: Git ref（分支名或 commit SHA）
+            
+        Returns:
+            文件内容文本（UTF-8）
+        """
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        headers = self._headers()
+        headers["Accept"] = "application/vnd.github.v3.raw"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=headers, params={"ref": ref}, timeout=20.0)
+                resp.raise_for_status()
+                return resp.text
+        except httpx.HTTPStatusError as e:
+            raise GitHubAPIError(f"HTTPStatusError getting file content: {e.response.status_code} - {e.response.text}") from e
+        except Exception as e:
+            raise GitHubAPIError(f"Error getting file content: {e}") from e
+
     async def get_pr_check_runs(self, owner: str, repo: str, head_sha: str) -> list[dict]:
         """获取指定提交的检查运行状态（CI/CD 状态）
         

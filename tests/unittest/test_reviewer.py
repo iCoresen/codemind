@@ -1,9 +1,10 @@
 import pytest
 import asyncio
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 from app.config import Settings
 from app.tools.pr_reviewer import PRReviewer
+from app.agents.base_agent import AgentResult, AgentStatus
 
 @pytest.fixture
 def settings():
@@ -18,7 +19,13 @@ def settings():
         server_host="0.0.0.0",
         server_port=8080,
         log_level="INFO",
-            redis_url="redis://localhost:6379/0"
+        redis_url="redis://localhost:6379/0",
+        changelog_soft_timeout=5,
+        changelog_hard_timeout=10,
+        logic_soft_timeout=15,
+        logic_hard_timeout=25,
+        unittest_soft_timeout=20,
+        unittest_hard_timeout=30,
     )
 
 @pytest.fixture
@@ -29,87 +36,88 @@ def event_payload():
         "pr_number": 42
     }
 
-@pytest.fixture
-def pr_reviewer(settings, event_payload):
-    with patch("app.tools.pr_reviewer.GitHubProvider"):
-        with patch("app.tools.pr_reviewer.LiteLLMAIHandler"):
-            return PRReviewer(settings, event_payload)
-
 @pytest.mark.asyncio
-@patch("app.tools.pr_reviewer.tomllib")
-@patch("app.tools.pr_reviewer.Template")
-@patch("app.tools.pr_reviewer.LiteLLMAIHandler")
+@patch("app.tools.pr_reviewer.ChangelogAgent")
+@patch("app.tools.pr_reviewer.LogicAgent")
+@patch("app.tools.pr_reviewer.UnitTestAgent")
+@patch("app.tools.pr_reviewer.TimeoutController")
 @patch("app.tools.pr_reviewer.GitHubProvider")
 @patch.object(PRReviewer, "_poll_and_update_ci_results")
-async def test_run_multi_agent_concurrency(mock_poll, mock_github_client, mock_ai_handler, mock_template, mock_tomllib, settings, event_payload):
-    # Mocking GitHub API
-    mock_gh_instance = mock_github_client.return_value
+@patch.object(PRReviewer, "_extract_ast_signatures", new_callable=AsyncMock)
+async def test_run_multi_agent_concurrency(
+    mock_extract_ast,
+    mock_poll,
+    mock_github_provider,
+    mock_timeout_controller,
+    mock_ut_agent,
+    mock_logic_agent,
+    mock_cl_agent,
+    settings,
+    event_payload
+):
+    # Mock GitHub Client behavior
+    mock_gh_instance = mock_github_provider.return_value
     mock_gh_instance.get_pr_info = AsyncMock(return_value={
         "title": "Fix bug",
         "body": "Fix off by one error",
-        "head": {"ref": "fix-branch"},
+        "head": {"ref": "fix-branch", "sha": "fake_sha"},
         "base": {"ref": "main"}
     })
     mock_gh_instance.list_pr_files = AsyncMock(return_value=[
-        {"filename": "test.py", "patch": "- old\n+ new"}
+        {"filename": "test.py", "patch": "- old\n+ new", "status": "modified"}
+    ])
+    mock_gh_instance.get_pr_commits = AsyncMock(return_value=[
+        {"sha": "12345", "message": "commit message", "author": "me"}
     ])
     mock_gh_instance.publish_pr_comment = AsyncMock(return_value=12345)
+    mock_gh_instance.update_pr_comment = AsyncMock()
+
+    mock_extract_ast.return_value = "Mock AST Signature"
+
+    # Mock Timeout Controller
+    mock_tc_instance = mock_timeout_controller.return_value
     
-    # Mocking AI Async Task (Gather)
-    mock_ai_instance = mock_ai_handler.return_value
-    
-    # Needs to return tuples of (content, finish_reason)
-    async def mock_async_completion(*args, **kwargs):
-        user = args[1]
-        if "Mocked Reducer User Prompt" in str(user):
-            return """```yaml
-final_review:
-  executive_summary: "All good"
-  metrics:
-    estimated_review_effort: 1
-```""", "stop"
-        return "Expert Review Result", "stop"
-    
-    mock_ai_instance.async_chat_completion.side_effect = mock_async_completion
-    
-    # Mocking TOML Loading
-    mock_tomllib.load.return_value = {
-        "pr_review_prompt": {
-            "system": "Mocked System Prompt",
-            "user": "Mocked User Prompt"
-        }
-    }
-    
-    # Mocking Template
-    def mock_render(*args, **kwargs):
-        if "security_report" in kwargs:
-            return "Mocked Reducer User Prompt"
-        return "Mocked Expert User Prompt"
+    # We need the timeout controller to return mocked results based on the agent it gets
+    async def mock_run_with_timeout(agent, context):
+        if agent == mock_cl_agent.return_value:
+            return AgentResult("changelog", AgentStatus.COMPLETED, "CL Result", 1.0)
+        elif agent == mock_logic_agent.return_value:
+            return AgentResult("logic", AgentStatus.COMPLETED, "Logic Result", 2.0)
+        elif agent == mock_ut_agent.return_value:
+            return AgentResult("unittest", AgentStatus.COMPLETED, "UT Result", 3.0)
+        return AgentResult("unknown", AgentStatus.FAILED, "Error", 0)
         
-    mock_template.return_value.render.side_effect = mock_render
-    
-    # Create reviewer manually to inject mocked instances properly
+    mock_tc_instance.run_with_timeout = AsyncMock(side_effect=mock_run_with_timeout)
+
     reviewer = PRReviewer(settings, event_payload)
     reviewer.github = mock_gh_instance
-    reviewer.ai = mock_ai_instance
-    
+    reviewer.ai = MagicMock() # Not used directly in the mocked run since agents are mocked
+
     await reviewer.run()
-    
-    # Verify GitHub info was pulled
+
+    # Verify GitHub info was pulled concurrently
     mock_gh_instance.get_pr_info.assert_called_once_with("test_owner", "test_repo", 42)
     mock_gh_instance.list_pr_files.assert_called_once_with("test_owner", "test_repo", 42)
+    mock_gh_instance.get_pr_commits.assert_called_once_with("test_owner", "test_repo", 42)
     
-    # Reviewer runs 2 concurrent expert prompts + 1 reducer prompt = 3 AI calls total
-    assert mock_ai_instance.async_chat_completion.call_count == 3
-    
-    # Verify the comment was sent to GitHub
+    # Verify the initial skeleton comment was published
     mock_gh_instance.publish_pr_comment.assert_called_once()
-    mock_poll.assert_called_once()
-    args, kwargs = mock_gh_instance.publish_pr_comment.call_args
-    assert "All good" in args[3], "Summary from reducer should be in the final comment"
-    assert "CodeMind PR Review" in args[3]
+    
+    # Verify timeout controller was called for all 3 agents
+    assert mock_tc_instance.run_with_timeout.call_count == 3
+    
+    # Verify incremental updates were pushed to GitHub
+    assert mock_gh_instance.update_pr_comment.call_count >= 3 # at least 3 updates for 3 agents
 
-def test_format_review_comment(pr_reviewer):
+def test_logic_agent_format_review_comment():
+    # Because we moved this function to logic_agent, we can test it directly there.
+    from app.agents.logic_agent import LogicAgent
+    from unittest.mock import MagicMock
+    
+    settings = MagicMock()
+    ai_handler = MagicMock()
+    agent = LogicAgent(ai_handler, settings)
+    
     raw_response = '''```yaml
 final_review:
   executive_summary: "Overall good but has some logic issues."
@@ -132,19 +140,11 @@ final_review:
         description: "Missing docstrings"
         file: "app/utils.py"
         line: 10
-  key_issues_to_review:
-    - "Unescaped user input"
 ```'''
     
-    formatted = pr_reviewer._format_review_comment(raw_response, "test_owner", "test_repo", "fake_sha")
+    formatted = agent._format_review_content(raw_response, "test_owner", "test_repo", "fake_sha")
     
     assert "**Estimated effort to review:** 3" in formatted
     assert "Overall good but has some logic issues." in formatted
     assert "SQL Injection risk" in formatted
     assert "O(N^2)" in formatted
-
-
-    # Test failure mode
-    bad_yaml = "not: a valid: yaml: {"
-    with pytest.raises(Exception):
-        pr_reviewer._format_review_comment(bad_yaml, "test_owner", "test_repo", "fake_sha", raise_on_fail=True)
