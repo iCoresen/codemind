@@ -62,7 +62,12 @@ async def test_run_multi_agent_concurrency(mock_poll, mock_github_client, mock_a
     async def mock_async_completion(*args, **kwargs):
         user = args[1]
         if "Mocked Reducer User Prompt" in str(user):
-            return "```yaml\nsummary: All good\nestimated_effort: 1\n```", "stop"
+            return """```yaml
+final_review:
+  executive_summary: "All good"
+  metrics:
+    estimated_review_effort: 1
+```""", "stop"
         return "Expert Review Result", "stop"
     
     mock_ai_instance.async_chat_completion.side_effect = mock_async_completion
@@ -106,24 +111,40 @@ async def test_run_multi_agent_concurrency(mock_poll, mock_github_client, mock_a
 
 def test_format_review_comment(pr_reviewer):
     raw_response = '''```yaml
-estimated_effort: 3
-summary: "Overall good but has some logic issues."
-security_concerns: "SQL Injection risk on line 42"
-performance_concerns: "O(N^2) loop found"
-style_concerns: "Missing docstrings"
-key_issues_to_review:
-  - "Unescaped user input"
+final_review:
+  executive_summary: "Overall good but has some logic issues."
+  metrics:
+    estimated_review_effort: 3
+    security_score: 5
+  prioritized_issues:
+    high_priority_issues:
+      - title: "Security concerns"
+        description: "SQL Injection risk"
+        file: "app/models.py"
+        line: 42
+    medium_priority_issues:
+      - title: "Performance concerns"
+        description: "O(N^2) loop found"
+        file: "app/utils.py"
+        line: 100
+    low_priority_suggestions:
+      - title: "Style concerns"
+        description: "Missing docstrings"
+        file: "app/utils.py"
+        line: 10
+  key_issues_to_review:
+    - "Unescaped user input"
 ```'''
     
     formatted = pr_reviewer._format_review_comment(raw_response, "test_owner", "test_repo", "fake_sha")
     
-    assert "**得分 (Estimated Effort):** 3/5" in formatted
+    assert "**Estimated effort to review:** 3" in formatted
     assert "Overall good but has some logic issues." in formatted
     assert "SQL Injection risk" in formatted
     assert "O(N^2)" in formatted
-    assert "Unescaped user input" in formatted
+
 
     # Test failure mode
-    bad_yaml = "not yaml format"
+    bad_yaml = "not: a valid: yaml: {"
     with pytest.raises(Exception):
         pr_reviewer._format_review_comment(bad_yaml, "test_owner", "test_repo", "fake_sha", raise_on_fail=True)

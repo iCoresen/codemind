@@ -222,21 +222,62 @@ class PRReviewer:
     def _format_issue_item(self, issue: dict, owner: str, repo: str, head_sha: str) -> str:
         title = issue.get('title') or issue.get('description', '')[:20]
         desc = issue.get('description', '')
-        file_path = issue.get('file', '')
-        line = issue.get('line', '')
+        raw_file = issue.get('file', '')
+        raw_line = issue.get('line', '')
         action = issue.get('immediate_action') or issue.get('recommended_action') or issue.get('improvement_suggestion')
         
-        link = ""
-        if file_path and line and head_sha:
-            link = f"https://github.com/{owner}/{repo}/blob/{head_sha}/{file_path}#L{line}"
-            header = f"<a href='{link}'><strong>{title}</strong></a>"
-        elif file_path and head_sha:
-            link = f"https://github.com/{owner}/{repo}/blob/{head_sha}/{file_path}"
-            header = f"<a href='{link}'><strong>{title}</strong></a>"
-        else:
-            header = f"<strong>{title}</strong>"
+        # 1. 解析多文件
+        files = []
+        if isinstance(raw_file, list):
+            files = [str(f).strip() for f in raw_file if str(f).strip()]
+        elif isinstance(raw_file, str) and raw_file:
+            files = [f.strip() for f in raw_file.split(',') if f.strip()]
             
-        md_part = f"<details><summary>{header}</summary>\n\n> {desc}\n"
+        # 2. 解析多行/行范围, 转成 GitHub 支持的锚点格式 (#L14-L20)
+        line_anchor = ""
+        display_line = ""
+        if raw_line:
+            line_str = str(raw_line).strip()
+            # 兼容可能的列表形式 [14, 20]
+            if isinstance(raw_line, list):
+                line_str = "-".join([str(l).strip() for l in raw_line])
+                
+            if '-' in line_str:
+                parts = [p.strip() for p in line_str.split('-')]
+                valid_num = [p for p in parts if p.isdigit()]
+                if len(valid_num) >= 2:
+                    line_anchor = f"#L{valid_num[0]}-L{valid_num[-1]}"
+                    display_line = f" (Lines {valid_num[0]}-{valid_num[-1]})"
+                elif len(valid_num) == 1:
+                    line_anchor = f"#L{valid_num[0]}"
+                    display_line = f" (Line {valid_num[0]})"
+            elif line_str.isdigit():
+                line_anchor = f"#L{line_str}"
+                display_line = f" (Line {line_str})"
+
+        # 3. 构建所有的文件链接列表
+        file_links = []
+        snippet_links = [] # 用于给 GitHub 自动展开的代码片段链接
+        if head_sha:
+            for file_path in files:
+                link = f"https://github.com/{owner}/{repo}/blob/{head_sha}/{file_path}{line_anchor}"
+                file_links.append(f"<a href='{link}'><code>{file_path}</code>{display_line}</a>")
+                # 将裸链接单独提取出来，GitHub会自动将其渲染为带有代码高亮的片段
+                # 注意：只有在带有具体行号 (line_anchor 存在) 的情况下，GitHub 才会将其展开为代码片段。
+                # 如果没有行号，仅展示一个重复的文件 url 显得多余。
+                if line_anchor:
+                    snippet_links.append(link)
+            
+        header = f"<strong>{title}</strong>"
+        
+        md_part = f"<details><summary>{header}</summary>\n\n"
+        if file_links:
+            md_part += f"📁 **相关位置**: {', '.join(file_links)}\n\n"
+            # 空行后紧跟裸链接列举，GitHub会将其 Unfurl (展开) 为具体行号的高亮代码块
+            for sl in snippet_links:
+                md_part += f"{sl}\n\n"
+            
+        md_part += f"> {desc}\n"
         if action:
             md_part += f">\n> 💡 **建议修复**: {action}\n"
         md_part += "</details>\n"
