@@ -15,12 +15,15 @@ fi
 
 echo ""
 echo "2. Celery状态:"
-CELERY_PIDS=$(ps aux | grep "celery worker" | grep -v grep | wc -l)
-if [ $CELERY_PIDS -gt 0 ]; then
-    echo "   ✓ 运行中 ($CELERY_PIDS 个进程)"
-    ps aux | grep "celery worker" | grep -v grep | awk '{print "   PID: "$2" - "$11" "$12}'
+if [ -f logs/celery.pid ]; then
+    CELERY_PID=$(cat logs/celery.pid)
+    if kill -0 $CELERY_PID 2>/dev/null; then
+        echo "   ✓ 运行中 (PID: $CELERY_PID)"
+    else
+        echo "   ✗ PID文件存在但进程未运行"
+    fi
 else
-    echo "   ✗ 未运行"
+    echo "   ✗ 未运行 (无PID文件)"
 fi
 
 echo ""

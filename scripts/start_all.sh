@@ -18,8 +18,7 @@ check_command() {
 }
 
 echo "检查依赖..."
-check_command "python3" "Python 3"
-check_command "celery" "Celery (pip install celery)"
+check_command "uv" "uv (从 https://github.com/astral-sh/uv 安装)"
 check_command "ngrok" "ngrok (从 https://ngrok.com/download 下载)"
 check_command "redis-cli" "Redis (brew install redis 或 apt-get install redis)"
 
@@ -59,15 +58,18 @@ mkdir -p logs
 
 echo ""
 echo "1. 启动Celery Worker..."
-celery -A app.celery_app worker --loglevel=info --logfile=logs/celery.log --detach
-echo "✓ Celery Worker已启动 (后台运行)"
+# 使用 uv run 启动 celery (后台运行，日志输出到文件)
+nohup uv run celery -A app.celery_app worker --loglevel=info > logs/celery.log 2>&1 &
+CELERY_PID=$!
+echo "✓ Celery Worker已启动 (PID: $CELERY_PID)"
+echo $CELERY_PID > logs/celery.pid
 
 echo ""
 echo "2. 启动FastAPI应用..."
-# 使用uvicorn启动，端口默认为8000
-uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --log-level info --access-log --log-file logs/fastapi.log &
+nohup uv run uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --log-level info --access-log > logs/fastapi.log 2>&1 &
 FASTAPI_PID=$!
 echo "✓ FastAPI应用已启动 (PID: $FASTAPI_PID)"
+echo $FASTAPI_PID > logs/fastapi.pid
 
 # 等待FastAPI启动
 echo "等待FastAPI启动..."
@@ -84,9 +86,10 @@ echo "✓ FastAPI运行正常"
 echo ""
 echo "3. 启动ngrok内网穿透..."
 # 启动ngrok，将本地8000端口暴露到公网
-ngrok http 8000 --log=stdout > logs/ngrok.log &
+nohup ngrok http 8000 --log=stdout > logs/ngrok.log 2>&1 &
 NGROK_PID=$!
 echo "✓ ngrok已启动 (PID: $NGROK_PID)"
+echo $NGROK_PID > logs/ngrok.pid
 
 # 等待ngrok启动并获取公网URL
 echo "等待ngrok启动..."

@@ -40,7 +40,8 @@ def pr_reviewer(settings, event_payload):
 @patch("app.tools.pr_reviewer.Template")
 @patch("app.tools.pr_reviewer.LiteLLMAIHandler")
 @patch("app.tools.pr_reviewer.GitHubProvider")
-async def test_run_multi_agent_concurrency(mock_github_client, mock_ai_handler, mock_template, mock_tomllib, settings, event_payload):
+@patch.object(PRReviewer, "_poll_and_update_ci_results")
+async def test_run_multi_agent_concurrency(mock_poll, mock_github_client, mock_ai_handler, mock_template, mock_tomllib, settings, event_payload):
     # Mocking GitHub API
     mock_gh_instance = mock_github_client.return_value
     mock_gh_instance.get_pr_info = AsyncMock(return_value={
@@ -52,7 +53,7 @@ async def test_run_multi_agent_concurrency(mock_github_client, mock_ai_handler, 
     mock_gh_instance.list_pr_files = AsyncMock(return_value=[
         {"filename": "test.py", "patch": "- old\n+ new"}
     ])
-    mock_gh_instance.publish_pr_comment = AsyncMock()
+    mock_gh_instance.publish_pr_comment = AsyncMock(return_value=12345)
     
     # Mocking AI Async Task (Gather)
     mock_ai_instance = mock_ai_handler.return_value
@@ -93,11 +94,12 @@ async def test_run_multi_agent_concurrency(mock_github_client, mock_ai_handler, 
     mock_gh_instance.get_pr_info.assert_called_once_with("test_owner", "test_repo", 42)
     mock_gh_instance.list_pr_files.assert_called_once_with("test_owner", "test_repo", 42)
     
-    # Reviewer runs 3 concurrent expert prompts + 1 reducer prompt = 4 AI calls total
-    assert mock_ai_instance.async_chat_completion.call_count == 4
+    # Reviewer runs 2 concurrent expert prompts + 1 reducer prompt = 3 AI calls total
+    assert mock_ai_instance.async_chat_completion.call_count == 3
     
     # Verify the comment was sent to GitHub
     mock_gh_instance.publish_pr_comment.assert_called_once()
+    mock_poll.assert_called_once()
     args, kwargs = mock_gh_instance.publish_pr_comment.call_args
     assert "All good" in args[3], "Summary from reducer should be in the final comment"
     assert "CodeMind PR Review" in args[3]

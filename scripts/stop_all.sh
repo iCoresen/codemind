@@ -31,10 +31,15 @@ if [ -f logs/ngrok.pid ]; then
 fi
 
 # 停止Celery Worker
-CELERY_PIDS=$(ps aux | grep "celery worker" | grep -v grep | awk '{print $2}')
-if [ -n "$CELERY_PIDS" ]; then
-    echo "$CELERY_PIDS" | xargs kill -9
-    echo "✓ 已停止所有Celery Worker进程"
+if [ -f logs/celery.pid ]; then
+    CELERY_PID=$(cat logs/celery.pid)
+    if kill -0 $CELERY_PID 2>/dev/null; then
+        kill $CELERY_PID
+        echo "✓ 已停止Celery Worker (PID: $CELERY_PID)"
+    else
+        echo "Celery Worker进程已停止"
+    fi
+    rm -f logs/celery.pid
 fi
 
 echo ""
