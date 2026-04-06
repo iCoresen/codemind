@@ -328,34 +328,6 @@ class PRReviewer:
                         md += self._format_issue_item(issue, owner, repo, head_sha)
                 
                 return md
-            else:
-                # 向后兼容：处理旧的格式
-                effort = 0
-                for k, v in parsed.items():
-                    if k.startswith("estimated_effort"):
-                        effort = v
-                        break
-                
-                issues = parsed.get("key_issues_to_review", [])
-                security = parsed.get("security_concerns", "无")
-                performance = parsed.get("performance_concerns", "无")
-                style = parsed.get("style_concerns", "无")
-                summary = parsed.get("summary", "")
-                
-                md = f"## CodeMind PR Review\n\n"
-                if summary:
-                    md += f"{summary}\n\n"
-                md += f"**得分 (Estimated Effort):** {effort}/5\n\n"
-                
-                if issues:
-                    md += "### 主要问题 (Key Issues)\n"
-                    for issue in issues:
-                        md += f"- {issue}\n"
-                
-                md += f"\n### 安全隐患 (Security Concerns)\n{security}\n"
-                md += f"\n### 性能问题 (Performance Concerns)\n{performance}\n"
-                md += f"\n### 代码规范 (Style Concerns)\n{style}\n"
-                return md
                 
         except Exception as e:
             logger.error(f"Failed to parse YAML response: {e}")
