@@ -65,3 +65,16 @@ class GitHubProvider(GitProvider):
             raise GitHubAPIError(f"HTTPStatusError publishing PR comment: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
             raise GitHubAPIError(f"Error publishing PR comment: {e}") from e
+
+    async def get_pr_check_runs(self, owner: str, repo: str, head_sha: str) -> list[dict]:
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/check-runs"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=self._headers(), timeout=20.0)
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("check_runs", [])
+        except httpx.HTTPStatusError as e:
+            raise GitHubAPIError(f"HTTPStatusError getting check runs: {e.response.status_code} - {e.response.text}") from e
+        except Exception as e:
+            raise GitHubAPIError(f"Error getting check runs: {e}") from e

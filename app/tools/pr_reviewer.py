@@ -51,7 +51,7 @@ class PRReviewer:
 
         # 3. Load & Render Prompts
         prompts_dir = Path(__file__).parent.parent / "prompts"
-        agent_names = ["security", "performance", "style"]
+        agent_names = ["security", "performance"]
         
         async def run_agent(name: str, max_retries: int = 2) -> str:
             path = prompts_dir / f"{name}_prompt.toml"
@@ -81,8 +81,32 @@ class PRReviewer:
             return ""
 
         # 4. Run Concurrent Reviews
-        logger.info("Executing concurrent reviews: Security, Performance, Style")
+        logger.info("Executing concurrent reviews: Security, Performance and fetching CI linter results")
+        
+        async def fetch_ci_linter_report() -> str:
+            # try to get the CI linter output from check runs
+            try:
+                check_runs = await self.github.get_pr_check_runs(owner, repo, head_sha)
+                linter_output = []
+                for check in check_runs:
+                    name = check.get("name", "").lower()
+                    if any(l in name for l in ["flake8", "eslint", "sonar", "lint", "style"]):
+                        output = check.get("output") or {}
+                        sn = str(output.get("summary", ""))[:1000] # 截断 Summary 防止极其冗长
+                        txt = str(output.get("text", ""))[:4000]   # 限制报错 Detail 最大约 4000 字符(~1K token)
+                        if len(str(output.get("text", ""))) > 4000:
+                            txt += "\n...[CI输出过长，已截断]..."
+                        
+                        linter_output.append(f"CI Check `{name}`:\\nStatus: {check.get('conclusion')}\\nSummary: {sn}\\nDetails: {txt}")
+                if not linter_output:
+                    return "No CI Linter/Style check results found or they haven't finished yet."
+                return "\\n\\n".join(linter_output)
+            except Exception as e:
+                logger.warning(f"Failed to fetch CI Linter results: {e}")
+                return "CI Linter check failed to fetch"
+
         tasks = [run_agent(name) for name in agent_names]
+        tasks.append(fetch_ci_linter_report())
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # 内存状态保存 (Memory State)
@@ -101,6 +125,9 @@ class PRReviewer:
         r_system = reducer_prompts["system"]
         r_user_template = Template(reducer_prompts["user"])
         r_user = r_user_template.render(
+            title=title,
+            branch=branch,
+            description=description,
             security_report=agent_results["security"],
             performance_report=agent_results["performance"],
             style_report=agent_results["style"]
