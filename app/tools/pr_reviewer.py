@@ -81,39 +81,15 @@ class PRReviewer:
             return ""
 
         # 4. Run Concurrent Reviews
-        logger.info("Executing concurrent reviews: Security, Performance and fetching CI linter results")
-        
-        async def fetch_ci_linter_report() -> str:
-            # try to get the CI linter output from check runs
-            try:
-                check_runs = await self.github.get_pr_check_runs(owner, repo, head_sha)
-                linter_output = []
-                for check in check_runs:
-                    name = check.get("name", "").lower()
-                    if any(l in name for l in ["flake8", "eslint", "sonar", "lint", "style"]):
-                        output = check.get("output") or {}
-                        sn = str(output.get("summary", ""))[:1000] # 截断 Summary 防止极其冗长
-                        txt = str(output.get("text", ""))[:4000]   # 限制报错 Detail 最大约 4000 字符(~1K token)
-                        if len(str(output.get("text", ""))) > 4000:
-                            txt += "\n...[CI输出过长，已截断]..."
-                        
-                        linter_output.append(f"CI Check `{name}`:\\nStatus: {check.get('conclusion')}\\nSummary: {sn}\\nDetails: {txt}")
-                if not linter_output:
-                    return "No CI Linter/Style check results found or they haven't finished yet."
-                return "\\n\\n".join(linter_output)
-            except Exception as e:
-                logger.warning(f"Failed to fetch CI Linter results: {e}")
-                return "CI Linter check failed to fetch"
-
+        logger.info("Executing concurrent reviews: Security, Performance")
         tasks = [run_agent(name) for name in agent_names]
-        tasks.append(fetch_ci_linter_report())
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # 内存状态保存 (Memory State)
         agent_results = {
             "security": results[0] if not isinstance(results[0], Exception) else f"Error: {str(results[0])}",
             "performance": results[1] if not isinstance(results[1], Exception) else f"Error: {str(results[1])}",
-            "style": results[2] if not isinstance(results[2], Exception) else f"Error: {str(results[2])}",
+            "style": "⏳ 代码规范（Flake8/ESLint 等 CI 流程）正在后台扫描中，结果稍后将自动更新。",
         }
 
         # 5. Reducer Phase
@@ -162,14 +138,86 @@ class PRReviewer:
                 else:
                     logger.info("Retrying Reducer completion...")
 
-        # 6. Publish Comment
+        # 6. Publish Comment and Wait for CI
+        formatted_comment += "\n\n---\n*⏳ CodeMind 逻辑审查已完成，正在等待后台 CI 规范扫描结果，稍后将自动更新本条评论...*"
+
         try:
-            await self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
-            logger.info(f"Review comment published for {owner}/{repo}#{pr_number}")
+            comment_id = await self.github.publish_pr_comment(owner, repo, pr_number, formatted_comment)
+            logger.info(f"Review comment published for {owner}/{repo}#{pr_number}, comment_id={comment_id}")
         except GitHubAPIError as e:
             logger.error(f"Failed to publish PR review comment for {owner}/{repo}#{pr_number}: {e}")
             raise
+            
+        await self._poll_and_update_ci_results(owner, repo, head_sha, comment_id, formatted_comment)
 
+
+    async def _poll_and_update_ci_results(self, owner: str, repo: str, head_sha: str, comment_id: int, current_comment_body: str):
+        logger.info(f"Starting CI polling for {owner}/{repo} branch {head_sha}")
+        max_retries = 30  # 30 * 10 = 300 seconds (5 minutes timeout)
+        
+        plcs = "\n\n---\n*⏳ CodeMind 逻辑审查已完成，正在等待后台 CI 规范扫描结果，稍后将自动更新本条评论...*"
+        
+        for attempt in range(max_retries):
+            await asyncio.sleep(10)
+            try:
+                check_runs = await self.github.get_pr_check_runs(owner, repo, head_sha)
+                
+                # Retrieve only the checkers that are relevant to Linter 
+                relevant_checks = [c for c in check_runs if any(l in c.get("name", "").lower() for l in ["flake8", "eslint", "sonar", "lint", "style"])]
+                
+                if not relevant_checks:
+                    # If after 60s still no CI triggered, maybe there's no CI
+                    if attempt > 5:
+                        final_append = "\n\n---\n*✅ 未检测到后台排队的 CI 规范扫描 (Flake8/ESLint 等)，本次审查结束。*"
+                        new_comment = current_comment_body.replace(plcs, final_append)
+                        await self.github.update_pr_comment(owner, repo, comment_id, new_comment)
+                        return
+                    continue
+                
+                # Check for completion
+                pending = any(check.get("status") != "completed" for check in relevant_checks)
+                if pending:
+                    logger.info(f"CI linter still running... (Attempt {attempt+1}/{max_retries})")
+                    continue
+                    
+                # All completed, format the update
+                linter_output = []
+                has_failures = False
+                for check in relevant_checks:
+                    name = check.get("name", "Linter")
+                    conclusion = check.get('conclusion')
+                    if conclusion in ["failure", "timed_out", "action_required"]:
+                        has_failures = True
+                        
+                    output = check.get("output") or {}
+                    sn = str(output.get("summary", ""))[:1000]
+                    txt = str(output.get("text", ""))[:4000]
+                    if len(str(output.get("text", ""))) > 4000:
+                        txt += "\n...[CI输出过长，已截断]..."
+                        
+                    linter_output.append(
+                        f"<details><summary>CI Check: {name} (<strong>{conclusion}</strong>)</summary>\n\n"
+                        f"**Summary:**\n{sn}\n\n**Details:**\n```text\n{txt}\n```\n</details>"
+                    )
+                
+                header = "### ❌ 代码规范扫描未通过" if has_failures else "### ✅ 代码规范扫描通过"
+                final_append = "\n\n---\n" + header + "\n" + "\n\n".join(linter_output)
+                
+                new_comment = current_comment_body.replace(plcs, final_append)
+                await self.github.update_pr_comment(owner, repo, comment_id, new_comment)
+                logger.info(f"Updated PR comment {comment_id} with CI conclusion.")
+                return
+                
+            except Exception as e:
+                logger.warning(f"Error polling CI results: {e}")
+                
+        # Timeout situation
+        timeout_append = "\n\n---\n*⚠️ CI 代码规范扫描加载超时（超过5分钟），请移步 GitHub Checks 页面查看实时的 Linter 报告详情。*"
+        new_comment = current_comment_body.replace(plcs, timeout_append)
+        try:
+            await self.github.update_pr_comment(owner, repo, comment_id, new_comment)
+        except:
+            pass
 
     def _format_issue_item(self, issue: dict, owner: str, repo: str, head_sha: str) -> str:
         title = issue.get('title') or issue.get('description', '')[:20]

@@ -55,16 +55,28 @@ class GitHubProvider(GitProvider):
         except Exception as e:
             raise GitHubAPIError(f"Error getting PR diff: {e}") from e
 
-    async def publish_pr_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
+    async def publish_pr_comment(self, owner: str, repo: str, pr_number: int, body: str) -> int:
         url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(url, headers=self._headers(), json={"body": body}, timeout=20.0)
                 resp.raise_for_status()
+                return resp.json().get("id")
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError publishing PR comment: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
             raise GitHubAPIError(f"Error publishing PR comment: {e}") from e
+
+    async def update_pr_comment(self, owner: str, repo: str, comment_id: int, body: str) -> None:
+        url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.patch(url, headers=self._headers(), json={"body": body}, timeout=20.0)
+                resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise GitHubAPIError(f"HTTPStatusError updating PR comment: {e.response.status_code} - {e.response.text}") from e
+        except Exception as e:
+            raise GitHubAPIError(f"Error updating PR comment: {e}") from e
 
     async def get_pr_check_runs(self, owner: str, repo: str, head_sha: str) -> list[dict]:
         url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/check-runs"
