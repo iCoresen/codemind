@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import httpx
 from typing import Any
 
 from app.git_providers.github_provider import GitHubProvider
@@ -81,9 +82,12 @@ class CIUpdaterService:
 
     async def _get_prs_for_commit(self, owner: str, repo: str, head_sha: str) -> list[dict[str, Any]]:
         """获取与指定提交相关的 PR 列表"""
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/pulls"
         try:
-            prs = await self.provider.client.get(f"/repos/{owner}/{repo}/commits/{head_sha}/pulls")
-            return prs.json()
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=self.provider._headers(), timeout=20.0)
+                resp.raise_for_status()
+                return resp.json()
         except Exception as e:
             logger.error("Failed to get PRs for commit %s: %s", head_sha, e)
             return []

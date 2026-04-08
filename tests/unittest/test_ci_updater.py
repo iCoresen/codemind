@@ -213,17 +213,24 @@ async def test_get_prs_for_commit_success(ci_updater, mock_github_provider):
     mock_response.json.return_value = [{"number": 1, "title": "Test PR"}]
     mock_response.raise_for_status = MagicMock()
     
+    # 模拟 httpx.AsyncClient 上下文管理器
+    mock_client = MagicMock()
+    mock_client.get.return_value = mock_response
+    
     with patch('httpx.AsyncClient') as mock_client_class:
-        mock_client = MagicMock()
+        # 模拟 AsyncClient 的上下文管理器行为
         mock_client_class.return_value.__aenter__.return_value = mock_client
-        mock_client.get.return_value = mock_response
         
         result = await ci_updater._get_prs_for_commit("owner", "repo", "abc123")
         
         assert result == [{"number": 1, "title": "Test PR"}]
         mock_client.get.assert_called_once_with(
             "https://api.github.com/repos/owner/repo/commits/abc123/pulls",
-            headers=mock_github_provider._headers(),
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "Authorization": "Bearer fake_token"
+            },
             timeout=20.0
         )
 
@@ -231,14 +238,25 @@ async def test_get_prs_for_commit_success(ci_updater, mock_github_provider):
 @pytest.mark.asyncio
 async def test_get_prs_for_commit_failure(ci_updater, mock_github_provider):
     """测试获取关联 PR 失败"""
+    # 模拟 httpx.AsyncClient 上下文管理器
+    mock_client = MagicMock()
+    mock_client.get.side_effect = httpx.RequestError("Network error")
+    
     with patch('httpx.AsyncClient') as mock_client_class:
-        mock_client = MagicMock()
         mock_client_class.return_value.__aenter__.return_value = mock_client
-        mock_client.get.side_effect = httpx.RequestError("Network error")
         
         result = await ci_updater._get_prs_for_commit("owner", "repo", "abc123")
         
         assert result == []
+        mock_client.get.assert_called_once_with(
+            "https://api.github.com/repos/owner/repo/commits/abc123/pulls",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "Authorization": "Bearer fake_token"
+            },
+            timeout=20.0
+        )
 
 
 @pytest.mark.asyncio
