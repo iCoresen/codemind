@@ -42,11 +42,9 @@ def event_payload():
 @patch("app.tools.pr_reviewer.UnitTestAgent")
 @patch("app.tools.pr_reviewer.TimeoutController")
 @patch("app.tools.pr_reviewer.GitHubProvider")
-@patch.object(PRReviewer, "_poll_and_update_ci_results")
 @patch.object(PRReviewer, "_extract_ast_signatures", new_callable=AsyncMock)
 async def test_run_multi_agent_concurrency(
     mock_extract_ast,
-    mock_poll,
     mock_github_provider,
     mock_timeout_controller,
     mock_ut_agent,
