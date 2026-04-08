@@ -50,6 +50,10 @@ class ResultAggregator:
         start = self.SECTION_START.format(name=name.upper())
         end = self.SECTION_END.format(name=name.upper())
         title = self.SECTION_TITLES.get(name, name)
+        
+        if name == "unittest":
+            content = f"<details>\n<summary>点击展开/折叠</summary>\n\n{content}\n\n</details>"
+            
         return f"{start}\n### {title}\n\n{content}\n\n{end}"
     def build_initial_comment(self, pr_ctx: PRContext) -> str:
         """
@@ -91,8 +95,8 @@ class ResultAggregator:
         # 根据状态确定显示内容
         if result.status in (AgentStatus.COMPLETED, AgentStatus.SOFT_TIMEOUT):
             display_content = result.content
-            if result.status == AgentStatus.SOFT_TIMEOUT:
-                display_content += f"\n\n*⏱️ 该分析耗时 {result.elapsed_seconds}s（超过软超时阈值）*"
+            # if result.status == AgentStatus.SOFT_TIMEOUT:
+            #     display_content += f"\n\n*⏱️ 该分析耗时 {result.elapsed_seconds}s（超过软超时阈值）*"
         elif result.status == AgentStatus.DEGRADED:
             display_content = self.DEGRADED_TEXTS.get(agent_name, result.content)
         elif result.status == AgentStatus.FAILED:
