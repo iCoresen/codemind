@@ -85,7 +85,7 @@ class CIUpdaterService:
             prs = await self.provider.client.get(f"/repos/{owner}/{repo}/commits/{head_sha}/pulls")
             return prs.json()
         except Exception as e:
-            logger.error("Failed to get PRs for commit %s: %e", head_sha, e)
+            logger.error("Failed to get PRs for commit %s: %s", head_sha, e)
             return []
 
     async def _get_bot_comments(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
@@ -94,5 +94,5 @@ class CIUpdaterService:
             comments = await self.provider.get_pr_comments(owner, repo, pr_number)
             return [c for c in comments if "CodeMind" in c.get("body", "")]
         except Exception as e:
-            logger.error("Failed to get comments for PR #%d: %e", pr_number, e)
+            logger.error("Failed to get comments for PR #%d: %s", pr_number, e)
             return []
