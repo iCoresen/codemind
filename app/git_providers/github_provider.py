@@ -4,16 +4,27 @@ import httpx
 from app.git_providers.git_provider import GitProvider
 from app.exceptions import GitHubAPIError
 
+
 class GitHubProvider(GitProvider):
     """GitHub API 提供者实现，封装 GitHub REST API 调用"""
-    
+
     def __init__(self, token: str) -> None:
         """初始化 GitHub 提供者
-        
+
         Args:
             token: GitHub 个人访问令牌 (PAT)
         """
         self.token = token
+        transport = httpx.AsyncHTTPTransport(retries=3)
+        self._client = httpx.AsyncClient(
+            transport=transport,
+            timeout=httpx.Timeout(20.0, connect=10.0),
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+
+    async def close(self) -> None:
+        """清理连接池资源"""
+        await self._client.aclose()
 
     def _headers(self) -> dict[str, str]:
         """生成 GitHub API 请求头
@@ -45,10 +56,9 @@ class GitHubProvider(GitProvider):
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/files"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=self._headers(), timeout=20.0)
-                resp.raise_for_status()
-                return resp.json()
+            resp = await self._client.get(url, headers=self._headers())
+            resp.raise_for_status()
+            return resp.json()
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError getting PR files: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -67,10 +77,9 @@ class GitHubProvider(GitProvider):
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=self._headers(), timeout=20.0)
-                resp.raise_for_status()
-                return resp.json()
+            resp = await self._client.get(url, headers=self._headers())
+            resp.raise_for_status()
+            return resp.json()
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError getting PR info: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -91,10 +100,9 @@ class GitHubProvider(GitProvider):
         headers = self._headers()
         headers["Accept"] = "application/vnd.github.v3.diff"  # 请求 diff 格式
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=headers, timeout=20.0)
-                resp.raise_for_status()
-                return resp.text
+            resp = await self._client.get(url, headers=headers)
+            resp.raise_for_status()
+            return resp.text
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError getting PR diff: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -114,10 +122,9 @@ class GitHubProvider(GitProvider):
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(url, headers=self._headers(), json={"body": body}, timeout=20.0)
-                resp.raise_for_status()
-                return resp.json().get("id")
+            resp = await self._client.post(url, headers=self._headers(), json={"body": body})
+            resp.raise_for_status()
+            return resp.json().get("id")
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError publishing PR comment: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -134,9 +141,8 @@ class GitHubProvider(GitProvider):
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/issues/comments/{comment_id}"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.patch(url, headers=self._headers(), json={"body": body}, timeout=20.0)
-                resp.raise_for_status()
+            resp = await self._client.patch(url, headers=self._headers(), json={"body": body})
+            resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError updating PR comment: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -155,18 +161,17 @@ class GitHubProvider(GitProvider):
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/commits"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=self._headers(), timeout=20.0)
-                resp.raise_for_status()
-                commits = resp.json()
-                return [
-                    {
-                        "sha": c.get("sha", "")[:8],
-                        "message": c.get("commit", {}).get("message", ""),
-                        "author": c.get("commit", {}).get("author", {}).get("name", ""),
-                    }
-                    for c in commits
-                ]
+            resp = await self._client.get(url, headers=self._headers())
+            resp.raise_for_status()
+            commits = resp.json()
+            return [
+                {
+                    "sha": c.get("sha", "")[:8],
+                    "message": c.get("commit", {}).get("message", ""),
+                    "author": c.get("commit", {}).get("author", {}).get("name", ""),
+                }
+                for c in commits
+            ]
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError getting PR commits: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -188,10 +193,9 @@ class GitHubProvider(GitProvider):
         headers = self._headers()
         headers["Accept"] = "application/vnd.github.v3.raw"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=headers, params={"ref": ref}, timeout=20.0)
-                resp.raise_for_status()
-                return resp.text
+            resp = await self._client.get(url, headers=headers, params={"ref": ref})
+            resp.raise_for_status()
+            return resp.text
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError getting file content: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -210,11 +214,10 @@ class GitHubProvider(GitProvider):
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/check-runs"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=self._headers(), timeout=20.0)
-                resp.raise_for_status()
-                data = resp.json()
-                return data.get("check_runs", [])
+            resp = await self._client.get(url, headers=self._headers())
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("check_runs", [])
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError getting check runs: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
@@ -236,10 +239,9 @@ class GitHubProvider(GitProvider):
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=self._headers(), timeout=20.0)
-                resp.raise_for_status()
-                return resp.json()
+            resp = await self._client.get(url, headers=self._headers())
+            resp.raise_for_status()
+            return resp.json()
         except httpx.HTTPStatusError as e:
             raise GitHubAPIError(f"HTTPStatusError getting PR comments: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:

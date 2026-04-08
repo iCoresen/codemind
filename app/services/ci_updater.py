@@ -149,18 +149,17 @@ class CIUpdaterService:
         logger.info(f"查询关联PR: {url}")
         
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, headers=self.provider._headers(), timeout=20.0)
-                logger.info(f"GitHub API响应状态: {resp.status_code}")
-                
-                if resp.status_code == 404:
-                    logger.warning(f"提交 {head_sha} 未找到或不在PR中")
-                    return []
-                
-                resp.raise_for_status()
-                prs = resp.json()
-                logger.info(f"API返回 {len(prs)} 个PR")
-                return prs
+            resp = await self.provider._client.get(url, headers=self.provider._headers())
+            logger.info(f"GitHub API响应状态: {resp.status_code}")
+
+            if resp.status_code == 404:
+                logger.warning(f"提交 {head_sha} 未找到或不在PR中")
+                return []
+
+            resp.raise_for_status()
+            prs = resp.json()
+            logger.info(f"API返回 {len(prs)} 个PR")
+            return prs
         except httpx.HTTPStatusError as e:
             logger.error(f"GitHub API错误: {e.response.status_code} - {e.response.text[:200]}")
             return []
@@ -169,25 +168,40 @@ class CIUpdaterService:
             return []
 
     async def _get_bot_comments(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
-        """获取由 CodeMind Bot 发布的评论"""
+        """获取由 CodeMind Bot 发布的评论（带指数退避重试）"""
         logger.info(f"获取PR #{pr_number} 的评论...")
-        
-        try:
-            comments = await self.provider.get_pr_comments(owner, repo, pr_number)
-            logger.info(f"获取到 {len(comments)} 条评论")
-            
-            bot_comments = []
-            for i, comment in enumerate(comments):
-                body = comment.get("body", "")
-                user = comment.get("user", {}).get("login", "unknown")
-                
-                # 放宽匹配条件
-                if "CodeMind" in body or "codemind" in body.lower():
-                    bot_comments.append(comment)
-                    logger.info(f"  评论 #{i+1}: 用户={user}, 长度={len(body)}, 匹配为CodeMind评论")
-            
-            logger.info(f"找到 {len(bot_comments)} 个CodeMind评论")
-            return bot_comments
-        except Exception as e:
-            logger.error(f"获取PR #{pr_number} 评论失败: {e}")
-            return []
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                comments = await self.provider.get_pr_comments(owner, repo, pr_number)
+                logger.info(f"获取到 {len(comments)} 条评论")
+
+                bot_comments = []
+                for i, comment in enumerate(comments):
+                    body = comment.get("body", "")
+                    user = comment.get("user", {}).get("login", "unknown")
+
+                    # 放宽匹配条件
+                    if "CodeMind" in body or "codemind" in body.lower():
+                        bot_comments.append(comment)
+                        logger.info(f"  评论 #{i+1}: 用户={user}, 长度={len(body)}, 匹配为CodeMind评论")
+
+                logger.info(f"找到 {len(bot_comments)} 个CodeMind评论")
+                return bot_comments
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(
+                        "获取PR评论失败，可能是连接重置或API延迟 (尝试 %s/%s): %s",
+                        attempt + 1,
+                        max_retries,
+                        str(e)[:120],
+                    )
+                    logger.info(f"等待 {wait_time} 秒后重试...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"获取PR #{pr_number} 评论最终失败: {e}")
+                    return []
+
+        return []

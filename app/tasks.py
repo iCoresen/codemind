@@ -20,6 +20,8 @@ async def process_pr_review(ctx, event_payload: dict):
         logger.error("Failed to process PR Review: %s", e)
         raise
     finally:
+        if hasattr(reviewer, "github") and hasattr(reviewer.github, "close"):
+            await reviewer.github.close()
         if lock_key:
             await getattr(redis_client, "delete")(lock_key)
         if hasattr(redis_client, "aclose"):
@@ -34,6 +36,7 @@ async def process_ci_result(ctx, event_payload: dict):
     import redis.asyncio as redis
     redis_client = redis.from_url(settings.redis_url)
     lock_key = event_payload.get("lock_key")
+    provider = None
     
     try:
         from app.git_providers.github_provider import GitHubProvider
@@ -54,6 +57,8 @@ async def process_ci_result(ctx, event_payload: dict):
         logger.error("Failed to process CI result update: %s", e)
         raise
     finally:
+        if provider:
+            await provider.close()
         if lock_key:
             await getattr(redis_client, "delete")(lock_key)
         if hasattr(redis_client, "aclose"):

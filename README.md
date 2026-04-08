@@ -106,7 +106,7 @@ make cli
 2. 启动 ARQ Worker：
 
 ```bash
-make arq】
+make arq
 ```
 
 3. 启动 API：

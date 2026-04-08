@@ -15,6 +15,7 @@ def mock_github_provider():
     """模拟 GitHubProvider"""
     mock = MagicMock(spec=GitHubProvider)
     mock._headers = MagicMock(return_value={"Authorization": "Bearer fake_token"})
+    mock._client = MagicMock()
     return mock
 
 
@@ -213,46 +214,33 @@ async def test_get_prs_for_commit_success(ci_updater, mock_github_provider):
     mock_response.json.return_value = [{"number": 1, "title": "Test PR"}]
     mock_response.raise_for_status = MagicMock()
     
-    # 模拟 httpx.AsyncClient 上下文管理器
-    mock_client = MagicMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    
-    with patch('httpx.AsyncClient') as mock_client_class:
-        # 模拟 AsyncClient 的上下文管理器行为
-        mock_client_class.return_value.__aenter__.return_value = mock_client
-        
-        result = await ci_updater._get_prs_for_commit("owner", "repo", "abc123")
-        
-        assert result == [{"number": 1, "title": "Test PR"}]
-        mock_client.get.assert_called_once_with(
-            "https://api.github.com/repos/owner/repo/commits/abc123/pulls",
-            headers={
-                "Authorization": "Bearer fake_token"
-            },
-            timeout=20.0
-        )
+    mock_github_provider._client.get = AsyncMock(return_value=mock_response)
+
+    result = await ci_updater._get_prs_for_commit("owner", "repo", "abc123")
+
+    assert result == [{"number": 1, "title": "Test PR"}]
+    mock_github_provider._client.get.assert_called_once_with(
+        "https://api.github.com/repos/owner/repo/commits/abc123/pulls",
+        headers={
+            "Authorization": "Bearer fake_token"
+        },
+    )
 
 
 @pytest.mark.asyncio
 async def test_get_prs_for_commit_failure(ci_updater, mock_github_provider):
     """测试获取关联 PR 失败"""
-    # 模拟 httpx.AsyncClient 上下文管理器
-    mock_client = MagicMock()
-    mock_client.get = AsyncMock(side_effect=httpx.RequestError("Network error"))
-    
-    with patch('httpx.AsyncClient') as mock_client_class:
-        mock_client_class.return_value.__aenter__.return_value = mock_client
-        
-        result = await ci_updater._get_prs_for_commit("owner", "repo", "abc123")
-        
-        assert result == []
-        mock_client.get.assert_called_once_with(
-            "https://api.github.com/repos/owner/repo/commits/abc123/pulls",
-            headers={
-                "Authorization": "Bearer fake_token"
-            },
-            timeout=20.0
-        )
+    mock_github_provider._client.get = AsyncMock(side_effect=httpx.RequestError("Network error"))
+
+    result = await ci_updater._get_prs_for_commit("owner", "repo", "abc123")
+
+    assert result == []
+    mock_github_provider._client.get.assert_called_once_with(
+        "https://api.github.com/repos/owner/repo/commits/abc123/pulls",
+        headers={
+            "Authorization": "Bearer fake_token"
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -278,7 +266,10 @@ async def test_get_bot_comments_success(ci_updater, mock_github_provider):
 async def test_get_bot_comments_failure(ci_updater, mock_github_provider):
     """测试获取评论失败"""
     mock_github_provider.get_pr_comments = AsyncMock(side_effect=Exception("API error"))
-    
-    result = await ci_updater._get_bot_comments("owner", "repo", 1)
-    
+
+    with patch("app.services.ci_updater.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        result = await ci_updater._get_bot_comments("owner", "repo", 1)
+
     assert result == []
+    assert mock_github_provider.get_pr_comments.call_count == 3
+    assert mock_sleep.await_count == 2

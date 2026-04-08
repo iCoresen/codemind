@@ -23,6 +23,8 @@ async def test_process_pr_review_success(mock_from_url, mock_pr_reviewer, mock_l
     
     mock_reviewer_instance = MagicMock()
     mock_reviewer_instance.run = AsyncMock()
+    mock_reviewer_instance.github = MagicMock()
+    mock_reviewer_instance.github.close = AsyncMock()
     mock_pr_reviewer.return_value = mock_reviewer_instance
 
     payload = {"lock_key": "test_lock", "action": "opened"}
@@ -33,6 +35,7 @@ async def test_process_pr_review_success(mock_from_url, mock_pr_reviewer, mock_l
     mock_load_settings.assert_called_once()
     mock_pr_reviewer.assert_called_once_with(mock_settings, payload)
     mock_reviewer_instance.run.assert_called_once()
+    mock_reviewer_instance.github.close.assert_called_once()
     
     mock_delete.assert_called_once_with("test_lock")
     mock_aclose.assert_called_once()
@@ -56,6 +59,8 @@ async def test_process_pr_review_exception(mock_from_url, mock_pr_reviewer, mock
     
     mock_reviewer_instance = MagicMock()
     mock_reviewer_instance.run = AsyncMock(side_effect=Exception("Test error"))
+    mock_reviewer_instance.github = MagicMock()
+    mock_reviewer_instance.github.close = AsyncMock()
     mock_pr_reviewer.return_value = mock_reviewer_instance
 
     payload = {"lock_key": "some_lock", "action": "opened"}
@@ -63,6 +68,8 @@ async def test_process_pr_review_exception(mock_from_url, mock_pr_reviewer, mock
     ctx = {}
     with pytest.raises(Exception):
         await process_pr_review(ctx, payload)
+
+    mock_reviewer_instance.github.close.assert_called_once()
         
     mock_delete.assert_called_once_with("some_lock")
     mock_aclose.assert_called_once()
