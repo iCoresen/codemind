@@ -90,22 +90,32 @@ async def github_webhook(
     x_hub_signature_256: str | None = Header(default=None),
     x_github_delivery: str | None = Header(default=None),
 ):
+    logger.info("=== GitHub Webhook 接收 ===")
+    logger.info(f"事件类型: {x_github_event}")
+    logger.info(f"交付ID: {x_github_delivery}")
+    
     raw_body = await request.body()
+    logger.info(f"原始body长度: {len(raw_body)} 字节")
 
     try:
         verify_signature(raw_body, x_hub_signature_256, settings.github_webhook_secret)
+        logger.info("签名验证通过")
     except WebhookValidationError as e:
-        logger.warning(f"Webhook signature validation failed: {e}")
+        logger.warning(f"Webhook签名验证失败: {e}")
         raise HTTPException(status_code=403, detail="invalid signature")
 
     try:
         body = json.loads(raw_body.decode("utf-8"))
+        logger.info(f"解析JSON成功，action字段: {body.get('action', 'N/A')}")
     except Exception as exc:
+        logger.error(f"JSON解析失败: {exc}")
         raise HTTPException(status_code=400, detail="invalid json") from exc
 
     event_payload = extract_pr_event(body, x_github_event)
-    logger.info(f"x_github_event: {x_github_event}, extracted payload: {event_payload}")
+    logger.info(f"提取的事件payload: {event_payload}")
+    
     if not event_payload:
+        logger.info(f"事件被忽略: {x_github_event}")
         return {"accepted": False, "reason": f"event ignored: {x_github_event}"}
 
     if x_github_delivery:
@@ -115,37 +125,41 @@ async def github_webhook(
     owner = event_payload["owner"]
     repo = event_payload["repo"]
     head_sha = event_payload.get("head_sha", "")
+    
+    logger.info(f"事件类型: {event_type}, owner={owner}, repo={repo}, head_sha={head_sha}")
 
     # 处理 PR Review 事件
     if event_type == "pull_request":
         pr_number = event_payload["pr_number"]
         lock_key = f"codemind:pr_lock:{owner}:{repo}:{pr_number}:{head_sha}"
+        logger.info(f"PR事件锁键: {lock_key}")
         
         is_locked = await redis_client.set(lock_key, "locked", ex=600, nx=True)
         if not is_locked:
-            logger.warning(f"Duplicate webhook or already processing: {lock_key}, ignoring.")
+            logger.warning(f"重复的webhook或正在处理中: {lock_key}, 忽略")
             return {"accepted": True, "reason": "Duplicate webhook running or already processed"}
 
-        logger.info("Processing PR event payload: %s", event_payload)
+        logger.info("处理PR事件payload: %s", event_payload)
         
         redis_settings = RedisSettings.from_dsn(settings.redis_url)
         arq_pool = await create_pool(redis_settings)
         
         event_payload["lock_key"] = lock_key
         await arq_pool.enqueue_job("process_pr_review", event_payload)
+        logger.info("PR审查任务已加入ARQ队列")
         return {"accepted": True, "message": "PR review deferred to background task via ARQ"}
 
     # 处理 CI Check Run 完成事件
     elif event_type == "check_run":
         lock_key = f"codemind:ci_lock:{owner}:{repo}:{head_sha}"
-        logger.info(f"CI event arrived! owner={owner} repo={repo} sha={head_sha}")
+        logger.info(f"CI事件锁键: {lock_key}")
         
         is_locked = await redis_client.set(lock_key, "locked", ex=120, nx=True)
         if not is_locked:
-            logger.warning(f"Duplicate check_run webhook or already processing: {lock_key}, ignoring.")
+            logger.warning(f"重复的check_run webhook或正在处理中: {lock_key}, 忽略")
             return {"accepted": True, "reason": "Duplicate webhook running"}
 
-        logger.info("Processing check_run event payload: %s", event_payload)
+        logger.info("处理check_run事件payload: %s", event_payload)
         
         redis_settings = RedisSettings.from_dsn(settings.redis_url)
         arq_pool = await create_pool(redis_settings)
@@ -153,7 +167,9 @@ async def github_webhook(
         event_payload["lock_key"] = lock_key
         # We will enqueue this as a new job for ARQ to process
         await arq_pool.enqueue_job("process_ci_result", event_payload, _defer_by=5)
+        logger.info("CI结果处理任务已加入ARQ队列，延迟5秒")
         
         return {"accepted": True, "message": "CI result process deferred to ARQ"}
 
+    logger.warning(f"未处理的事件类型: {event_type}")
     return {"accepted": False, "reason": "Unhandled event type"}
