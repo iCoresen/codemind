@@ -40,8 +40,8 @@ def load_settings() -> Settings:
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
         changelog_soft_timeout=float(os.getenv("CHANGELOG_SOFT_TIMEOUT", "5.0")),
         changelog_hard_timeout=float(os.getenv("CHANGELOG_HARD_TIMEOUT", "10.0")),
-        logic_soft_timeout=float(os.getenv("LOGIC_SOFT_TIMEOUT", "30.0")),
-        logic_hard_timeout=float(os.getenv("LOGIC_HARD_TIMEOUT", "60.0")),
+        logic_soft_timeout=float(os.getenv("LOGIC_SOFT_TIMEOUT", "45.0")),
+        logic_hard_timeout=float(os.getenv("LOGIC_HARD_TIMEOUT", "90.0")),
         unittest_soft_timeout=float(os.getenv("UNITTEST_SOFT_TIMEOUT", "45.0")),
         unittest_hard_timeout=float(os.getenv("UNITTEST_HARD_TIMEOUT", "90.0")),
     )

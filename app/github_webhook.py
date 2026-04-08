@@ -32,8 +32,10 @@ def verify_signature(raw_body: bytes, signature_256: str | None, secret: str) ->
 
 
 def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
+    logger.info(f"extract_pr_event received event type: {event}")
     if event == "check_run":
         action = body.get("action", "")
+        logger.info(f"check_run action: {action}")
         if action != "completed":
             return None
         repo_full_name = body.get("repository", {}).get("full_name", "")
@@ -102,8 +104,9 @@ async def github_webhook(
         raise HTTPException(status_code=400, detail="invalid json") from exc
 
     event_payload = extract_pr_event(body, x_github_event)
+    logger.info(f"x_github_event: {x_github_event}, extracted payload: {event_payload}")
     if not event_payload:
-        return {"accepted": False, "reason": "event ignored"}
+        return {"accepted": False, "reason": f"event ignored: {x_github_event}"}
 
     if x_github_delivery:
         event_payload["delivery_id"] = x_github_delivery
@@ -135,6 +138,7 @@ async def github_webhook(
     # 处理 CI Check Run 完成事件
     elif event_type == "check_run":
         lock_key = f"codemind:ci_lock:{owner}:{repo}:{head_sha}"
+        logger.info(f"CI event arrived! owner={owner} repo={repo} sha={head_sha}")
         
         is_locked = await redis_client.set(lock_key, "locked", ex=120, nx=True)
         if not is_locked:
