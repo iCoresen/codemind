@@ -3,7 +3,7 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from app.config import load_settings
 from app.log_config import setup_logging
-from app.tasks import process_pr_review
+from app.tasks import process_pr_review, process_ci_result
 
 settings = load_settings()
 setup_logging(settings, "arq")
@@ -13,7 +13,7 @@ logger = logging.getLogger("codemind.arq")
 redis_settings = RedisSettings.from_dsn(settings.redis_url)
 
 class WorkerSettings:
-    functions = [process_pr_review]
+    functions = [process_pr_review, process_ci_result]
     redis_settings = redis_settings
     max_jobs = 10
     max_tries = 3

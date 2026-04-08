@@ -167,10 +167,8 @@ class PRReviewer:
             except Exception as e:
                 logger.error(f"Error processing agent result: {e}", exc_info=True)
 
-        # ── Phase 6: CI 轮询 ──
-        await self._poll_and_update_ci_results(
-            owner, repo, head_sha, comment_id, current_body
-        )
+        # ── Phase 6: CI 结果更新已彻底解耦到 Webhook 回调机制中 ──
+        logger.info(f"PR Review for {owner}/{repo}#{pr_number} finished. CI results deferred to webhook.")
 
     async def _extract_ast_signatures(
         self,
@@ -227,106 +225,3 @@ class PRReviewer:
 
         # 提取签名
         return extract_changed_signatures_from_diff(diff, file_contents)
-
-    async def _poll_and_update_ci_results(
-        self,
-        owner: str,
-        repo: str,
-        head_sha: str,
-        comment_id: int,
-        current_comment_body: str,
-    ):
-        """轮询 CI 结果并增量更新评论（保留原有逻辑）"""
-        logger.info(f"Starting CI polling for {owner}/{repo} branch {head_sha}")
-        max_retries = 30  # 30 * 10 = 300 seconds (5 minutes timeout)
-
-        ci_placeholder = "\n\n---\n*⏳ 正在等待后台 CI 规范扫描结果，稍后将自动更新...*"
-        
-        # 追加 CI 等待占位符
-        current_comment_body += ci_placeholder
-        try:
-            await self.github.update_pr_comment(owner, repo, comment_id, current_comment_body)
-        except Exception:
-            pass
-
-        for attempt in range(max_retries):
-            await asyncio.sleep(10)
-            try:
-                check_runs = await self.github.get_pr_check_runs(
-                    owner, repo, head_sha
-                )
-
-                relevant_checks = [
-                    c
-                    for c in check_runs
-                    if any(
-                        l in c.get("name", "").lower()
-                        for l in ["flake8", "eslint", "sonar", "lint", "style"]
-                    )
-                ]
-
-                if not relevant_checks:
-                    if attempt > 5:
-                        final_append = "\n\n---\n*✅ 未检测到后台排队的 CI 规范扫描 (Flake8/ESLint 等)，本次审查结束。*"
-                        new_comment = current_comment_body.replace(
-                            ci_placeholder, final_append
-                        )
-                        await self.github.update_pr_comment(
-                            owner, repo, comment_id, new_comment
-                        )
-                        return
-                    continue
-
-                pending = any(
-                    check.get("status") != "completed" for check in relevant_checks
-                )
-                if pending:
-                    logger.info(
-                        f"CI linter still running... (Attempt {attempt+1}/{max_retries})"
-                    )
-                    continue
-
-                # 全部完成，格式化结果
-                linter_output = []
-                has_failures = False
-                for check in relevant_checks:
-                    name = check.get("name", "Linter")
-                    conclusion = check.get("conclusion")
-                    if conclusion in ["failure", "timed_out", "action_required"]:
-                        has_failures = True
-
-                    output = check.get("output") or {}
-                    sn = str(output.get("summary", ""))[:1000]
-                    txt = str(output.get("text", ""))[:4000]
-                    if len(str(output.get("text", ""))) > 4000:
-                        txt += "\n...[CI输出过长，已截断]..."
-
-                    linter_output.append(
-                        f"<details><summary>CI Check: {name} (<strong>{conclusion}</strong>)</summary>\n\n"
-                        f"**Summary:**\n{sn}\n\n**Details:**\n```text\n{txt}\n```\n</details>"
-                    )
-
-                header = (
-                    "### ❌ 代码规范扫描未通过"
-                    if has_failures
-                    else "### ✅ 代码规范扫描通过"
-                )
-                final_append = "\n\n---\n" + header + "\n" + "\n\n".join(linter_output)
-
-                new_comment = current_comment_body.replace(ci_placeholder, final_append)
-                await self.github.update_pr_comment(
-                    owner, repo, comment_id, new_comment
-                )
-                logger.info(f"Updated PR comment {comment_id} with CI conclusion.")
-                return
-
-            except Exception as e:
-                logger.warning(f"Error polling CI results: {e}")
-
-        # 超时
-        timeout_append = "\n\n---\n*⚠️ CI 代码规范扫描加载超时（超过5分钟），请移步 GitHub Checks 页面查看实时的 Linter 报告详情。*"
-        new_comment = current_comment_body.replace(ci_placeholder, timeout_append)
-        try:
-            await self.github.update_pr_comment(owner, repo, comment_id, new_comment)
-        except Exception:
-            pass

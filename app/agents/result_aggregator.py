@@ -112,6 +112,36 @@ class ResultAggregator:
         if updated == comment_body:
             logger.warning(f"Failed to replace section for agent '{agent_name}' - markers not found")
         return updated
+
+    def has_ci_results(self, comment_body: str) -> bool:
+        """检查评论是否已经附加了 CI 结果（使用隐藏锚点校验防重）"""
+        return "<!-- CODEMIND_CI_RESULTS -->" in comment_body
+
+    def append_ci_results(self, current_body: str, relevant_checks: list[dict], has_failures: bool) -> str:
+        """将 CI 检查结果拼接到现有的 PR 评论末尾并打上防重锚点"""
+        linter_output = []
+        for check in relevant_checks:
+            name = check.get("name", "Linter")
+            conclusion = check.get("conclusion")
+
+            output = check.get("output") or {}
+            sn = str(output.get("summary", ""))[:1000]
+            txt = str(output.get("text", ""))[:4000]
+            if len(str(output.get("text", ""))) > 4000:
+                txt += "\n...[CI输出过长，已截断]..."
+
+            linter_output.append(
+                f"<details><summary>CI Check: {name} (<strong>{conclusion}</strong>)</summary>\n\n"
+                f"**Summary:**\n{sn}\n\n**Details:**\n```text\n{txt}\n```\n</details>"
+            )
+
+        header = "### ❌ 代码规范扫描未通过" if has_failures else "### ✅ 代码规范扫描通过"
+        
+        # 使用锚点来防重
+        marker = "<!-- CODEMIND_CI_RESULTS -->"
+        final_append = f"\n\n---\n{marker}\n{header}\n" + "\n\n".join(linter_output)
+        
+        return current_body + final_append
     async def publish_update(self, owner: str, repo: str, comment_id: int, body: str) -> None:
         """
         通过 GitHub API 增量更新评论。

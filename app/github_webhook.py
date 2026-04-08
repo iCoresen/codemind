@@ -32,6 +32,26 @@ def verify_signature(raw_body: bytes, signature_256: str | None, secret: str) ->
 
 
 def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
+    if event == "check_run":
+        action = body.get("action", "")
+        if action != "completed":
+            return None
+        repo_full_name = body.get("repository", {}).get("full_name", "")
+        if "/" not in repo_full_name:
+            return None
+        owner, repo = repo_full_name.split("/", 1)
+        
+        # A check_run event usually contains check_run.head_sha
+        head_sha = body.get("check_run", {}).get("head_sha", "")
+        
+        return {
+            "type": "check_run",
+            "owner": owner,
+            "repo": repo,
+            "action": action,
+            "head_sha": head_sha,
+        }
+
     if event != "pull_request":
         return None
 
@@ -52,6 +72,7 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
 
     # 合格的 event_payload：owner, repo, pr_number, action, head_sha
     return {
+        "type": "pull_request",
         "owner": owner,
         "repo": repo,
         "pr_number": int(pr_number),
@@ -87,28 +108,48 @@ async def github_webhook(
     if x_github_delivery:
         event_payload["delivery_id"] = x_github_delivery
 
+    event_type = event_payload.get("type")
     owner = event_payload["owner"]
     repo = event_payload["repo"]
-    pr_number = event_payload["pr_number"]
     head_sha = event_payload.get("head_sha", "")
 
-    lock_key = f"codemind:pr_lock:{owner}:{repo}:{pr_number}:{head_sha}"
-    
-    # 尝试获取分布式锁，过期时间 10 分钟 (600s)
-    # 使用 Redis nx=True 实现互斥，并利用 asyncio 避免阻塞 FastAPI 的事件循环
-    is_locked = await redis_client.set(lock_key, "locked", ex=600, nx=True)
-    if not is_locked:
-        logger.warning(f"Duplicate webhook or already processing: {lock_key}, ignoring.")
-        return {"accepted": True, "reason": "Duplicate webhook running or already processed"}
+    # 处理 PR Review 事件
+    if event_type == "pull_request":
+        pr_number = event_payload["pr_number"]
+        lock_key = f"codemind:pr_lock:{owner}:{repo}:{pr_number}:{head_sha}"
+        
+        is_locked = await redis_client.set(lock_key, "locked", ex=600, nx=True)
+        if not is_locked:
+            logger.warning(f"Duplicate webhook or already processing: {lock_key}, ignoring.")
+            return {"accepted": True, "reason": "Duplicate webhook running or already processed"}
 
-    logger.info("Processing event payload: %s", event_payload)
-    
-    # 建立 arq pool
-    redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    arq_pool = await create_pool(redis_settings)
-    
-    # 调用 ARQ 任务
-    event_payload["lock_key"] = lock_key
-    await arq_pool.enqueue_job("process_pr_review", event_payload)
+        logger.info("Processing PR event payload: %s", event_payload)
+        
+        redis_settings = RedisSettings.from_dsn(settings.redis_url)
+        arq_pool = await create_pool(redis_settings)
+        
+        event_payload["lock_key"] = lock_key
+        await arq_pool.enqueue_job("process_pr_review", event_payload)
+        return {"accepted": True, "message": "PR review deferred to background task via ARQ"}
 
-    return {"accepted": True, "message": "PR review deferred to background task via ARQ"}
+    # 处理 CI Check Run 完成事件
+    elif event_type == "check_run":
+        lock_key = f"codemind:ci_lock:{owner}:{repo}:{head_sha}"
+        
+        is_locked = await redis_client.set(lock_key, "locked", ex=120, nx=True)
+        if not is_locked:
+            logger.warning(f"Duplicate check_run webhook or already processing: {lock_key}, ignoring.")
+            return {"accepted": True, "reason": "Duplicate webhook running"}
+
+        logger.info("Processing check_run event payload: %s", event_payload)
+        
+        redis_settings = RedisSettings.from_dsn(settings.redis_url)
+        arq_pool = await create_pool(redis_settings)
+        
+        event_payload["lock_key"] = lock_key
+        # We will enqueue this as a new job for ARQ to process
+        await arq_pool.enqueue_job("process_ci_result", event_payload, _defer_by=5)
+        
+        return {"accepted": True, "message": "CI result process deferred to ARQ"}
+
+    return {"accepted": False, "reason": "Unhandled event type"}
