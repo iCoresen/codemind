@@ -8,6 +8,7 @@ Token 消耗中等，但因需要理解代码结构所以耗时较长。
 """
 import time
 import logging
+import asyncio
 from pathlib import Path
 
 from jinja2 import Template
@@ -55,6 +56,10 @@ class UnitTestAgent(BaseAgent):
                 start_time,
             )
         
+        # 使用上下文中的原始 AST 和 Diff，因为外层已做了按语义的提取和组装
+        ast_signatures = context.ast_signatures
+        diff = context.diff
+        
         # 加载 Prompt 模板
         prompts_dir = Path(__file__).parent.parent / "prompts"
         prompt_path = prompts_dir / "unittest_prompt.toml"
@@ -74,23 +79,27 @@ class UnitTestAgent(BaseAgent):
             title=pr.title,
             branch=pr.branch,
             description=pr.description,
-            ast_signatures=context.ast_signatures[:15000],  # 限制 AST 输入量
-            diff=context.diff[:20000],  # 限制 Diff 输入量
+            ast_signatures=ast_signatures,  # 使用截断后的版本
+            diff=diff,  # 使用截断后的版本
         )
         
-        # 调用 LLM（使用稍高温度以生成更多样化的测试用例）
+        # 移除了内部强行硬超时限制和粗暴输出截断，由外层 TimeoutController 以及 Prompt 级强制约束来控制
         max_retries = 2
         for attempt in range(max_retries):
             try:
                 response_text, finish_reason = await self.ai.async_chat_completion(
                     system_prompt, user_prompt, temperature=0.4
                 )
+                
                 logger.info(
                     f"UnitTest Agent completed in {round(time.time() - start_time, 2)}s "
                     f"(attempt {attempt + 1})"
                 )
                 return self._make_result(AgentStatus.COMPLETED, response_text, start_time)
             
+            except asyncio.CancelledError:
+                logger.warning("UnitTest Agent task cancelled by external timeout controller.")
+                raise  # 将 CancelledError 持续抛出，交给外部降级处理
             except Exception as e:
                 logger.warning(f"UnitTest Agent attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:

@@ -51,7 +51,8 @@ Rules:
 - Use the appropriate test framework for the detected language
 - Include mock suggestions for external dependencies
 - If no testable functions are found, say so clearly
-- Maximum 5 test functions per changed function to keep output focused"""
+- STRICT CONSTRAINT: Please **only provide the 3 most important** test cases. The explanation for each case **must not exceed 50 words**. Do not output any irrelevant greetings, summaries, or filler text.
+- ONLY OUTPUT MARKDOWN."""
 user = """## PR Information
 - Title: {{ title }}
 - Branch: {{ branch }}
