@@ -55,7 +55,7 @@ class ResultAggregator:
             content = f"<details>\n<summary>点击展开/折叠</summary>\n\n{content}\n\n</details>"
             
         return f"{start}\n### {title}\n\n{content}\n\n{end}"
-    def build_initial_comment(self, pr_ctx: PRContext) -> str:
+    def build_initial_comment(self, pr_ctx: PRContext, active_agents: list[str]) -> str:
         """
         构建带占位符的骨架评论。
         
@@ -68,7 +68,7 @@ class ResultAggregator:
             f"---\n\n"
         )
         sections = []
-        for name in ["changelog", "logic", "unittest"]:
+        for name in active_agents:
             pending_text = self.PENDING_TEXTS[name]
             sections.append(self._make_section(name, pending_text))
         footer = (

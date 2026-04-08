@@ -13,13 +13,29 @@ def test_extract_pr_event():
     body = {
         "action": "opened",
         "repository": {"full_name": "owner/repo"},
-        "pull_request": {"number": 123, "head": {"sha": "abcdef"}}
+        "pull_request": {"number": 123, "head": {"sha": "abcdef"}, "body": "This is a fix. /codemind level=2"}
     }
     extracted = extract_pr_event(body, "pull_request")
     assert extracted["owner"] == "owner"
     assert extracted["repo"] == "repo"
     assert extracted["pr_number"] == 123
     assert extracted["head_sha"] == "abcdef"
+    assert extracted["level"] == 2
+
+def test_extract_issue_comment_event():
+    body = {
+        "action": "created",
+        "repository": {"full_name": "owner/repo"},
+        "issue": {"number": 456},
+        "comment": {"body": "/codemind level=1"}
+    }
+    extracted = extract_pr_event(body, "issue_comment")
+    assert extracted["owner"] == "owner"
+    assert extracted["repo"] == "repo"
+    assert extracted["pr_number"] == 456
+    assert extracted["action"] == "manual_trigger"
+    assert extracted["level"] == 1
+    assert extracted["head_sha"] == ""
 
 @patch("app.github_webhook.verify_signature")
 @patch("app.github_webhook.redis_client.set", new_callable=AsyncMock)

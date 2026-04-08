@@ -29,6 +29,7 @@ async def main():
     parser = argparse.ArgumentParser(description="CodeMind CLI Tester")
     parser.add_argument("--pr_url", required=True, help="GitHub PR URL")
     parser.add_argument("command", choices=["review"], help="Command to run")
+    parser.add_argument("--level", type=int, choices=[1, 2, 3], help="Optional override for review level (1=Changelog, 2=+Logic, 3=+UnitTest)")
     
     args = parser.parse_args()
     
@@ -44,6 +45,8 @@ async def main():
             
         try:
             event_payload = parse_pr_url(args.pr_url)
+            if args.level:
+                event_payload["level"] = args.level
         except Exception as e:
             logger.error(str(e))
             sys.exit(1)

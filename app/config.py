@@ -24,6 +24,8 @@ class Settings:
     logic_hard_timeout: float
     unittest_soft_timeout: float
     unittest_hard_timeout: float
+    default_review_level: int
+    core_keywords: list[str]
 
 def load_settings() -> Settings:
     return Settings(
@@ -44,4 +46,6 @@ def load_settings() -> Settings:
         logic_hard_timeout=float(os.getenv("LOGIC_HARD_TIMEOUT", "90.0")),
         unittest_soft_timeout=float(os.getenv("UNITTEST_SOFT_TIMEOUT", "45.0")),
         unittest_hard_timeout=float(os.getenv("UNITTEST_HARD_TIMEOUT", "90.0")),
+        default_review_level=int(os.getenv("DEFAULT_REVIEW_LEVEL", "3")),
+        core_keywords=os.getenv("CORE_KEYWORDS", "auth,payment,database").split(","),
     )

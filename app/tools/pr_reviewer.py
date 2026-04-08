@@ -21,6 +21,7 @@ from app.git_providers.github_provider import GitHubProvider
 from app.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 from app.algo.pr_processing import process_pr_files
 from app.algo.ast_analyzer import extract_changed_signatures_from_diff
+from app.algo.pr_router import determine_review_level
 from app.agents.agent_context import (
     PRContext,
     LogicAgentContext,
@@ -80,6 +81,15 @@ class PRReviewer:
         # 处理 Diff
         diff = process_pr_files(pr_files)
 
+        # ── Phase 1.5: 动态评估路由层级 (Routing Tier) ──
+        review_level = determine_review_level(pr_files, self.settings.default_review_level, self.settings.core_keywords)
+        
+        # Override with explicit level set from CLI/Webhook if any
+        if self.event_payload.get("level"):
+            review_level = int(self.event_payload["level"])
+            
+        logger.info(f"Determined Review Level: {review_level}")
+        
         # ── Phase 2: 构建隔离上下文 ──
         pr_ctx = PRContext(
             owner=owner,
@@ -104,7 +114,16 @@ class PRReviewer:
 
         # ── Phase 3: 发布骨架评论 ──
         aggregator = ResultAggregator(self.github)
-        initial_comment = aggregator.build_initial_comment(pr_ctx)
+        
+        active_agents = []
+        if review_level >= 1:
+            active_agents.append("changelog")
+        if review_level >= 2:
+            active_agents.append("logic")
+        if review_level >= 3:
+            active_agents.append("unittest")
+            
+        initial_comment = aggregator.build_initial_comment(pr_ctx, active_agents)
 
         try:
             comment_id = await self.github.publish_pr_comment(
@@ -120,38 +139,44 @@ class PRReviewer:
 
         # ── Phase 4: 并发启动三大 Agent ──
         controller = TimeoutController()
+        
+        tasks_to_wait = []
 
-        changelog_agent = ChangelogAgent(
-            ai=self.ai,
-            soft_timeout=self.settings.changelog_soft_timeout,
-            hard_timeout=self.settings.changelog_hard_timeout,
-        )
-        logic_agent = LogicAgent(
-            ai=self.ai,
-            settings=self.settings,
-            soft_timeout=self.settings.logic_soft_timeout,
-            hard_timeout=self.settings.logic_hard_timeout,
-        )
-        unittest_agent = UnitTestAgent(
-            ai=self.ai,
-            soft_timeout=self.settings.unittest_soft_timeout,
-            hard_timeout=self.settings.unittest_hard_timeout,
-        )
-
-        changelog_task = asyncio.create_task(
-            controller.run_with_timeout(changelog_agent, changelog_ctx)
-        )
-        logic_task = asyncio.create_task(
-            controller.run_with_timeout(logic_agent, logic_ctx)
-        )
-        unittest_task = asyncio.create_task(
-            controller.run_with_timeout(unittest_agent, unittest_ctx)
-        )
+        if "changelog" in active_agents:
+            changelog_agent = ChangelogAgent(
+                ai=self.ai,
+                soft_timeout=self.settings.changelog_soft_timeout,
+                hard_timeout=self.settings.changelog_hard_timeout,
+            )
+            tasks_to_wait.append(
+                asyncio.create_task(controller.run_with_timeout(changelog_agent, changelog_ctx))
+            )
+            
+        if "logic" in active_agents:
+            logic_agent = LogicAgent(
+                ai=self.ai,
+                settings=self.settings,
+                soft_timeout=self.settings.logic_soft_timeout,
+                hard_timeout=self.settings.logic_hard_timeout,
+            )
+            tasks_to_wait.append(
+                asyncio.create_task(controller.run_with_timeout(logic_agent, logic_ctx))
+            )
+            
+        if "unittest" in active_agents:
+            unittest_agent = UnitTestAgent(
+                ai=self.ai,
+                soft_timeout=self.settings.unittest_soft_timeout,
+                hard_timeout=self.settings.unittest_hard_timeout,
+            )
+            tasks_to_wait.append(
+                asyncio.create_task(controller.run_with_timeout(unittest_agent, unittest_ctx))
+            )
 
         # ── Phase 5: 渐进式交付 - 按完成顺序增量更新 ──
         current_body = initial_comment
         
-        for coro in asyncio.as_completed([changelog_task, logic_task, unittest_task]):
+        for coro in asyncio.as_completed(tasks_to_wait):
             try:
                 result: AgentResult = await coro
                 logger.info(

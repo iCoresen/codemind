@@ -54,11 +54,11 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
             "head_sha": head_sha,
         }
 
-    if event != "pull_request":
+    if event not in {"pull_request", "issue_comment"}:
         return None
 
     action = body.get("action", "")
-    if action not in {"opened", "reopened", "synchronize"}:
+    if action not in {"opened", "reopened", "synchronize", "created"}:
         return None
 
     repo_full_name = body.get("repository", {}).get("full_name", "")
@@ -66,6 +66,32 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
         return None
 
     owner, repo = repo_full_name.split("/", 1)
+    
+    if event == "issue_comment":
+        # Handle command in comment: "/codemind level=2"
+        comment_body = body.get("comment", {}).get("body", "")
+        if "/codemind" not in comment_body:
+            return None
+            
+        pr_number = body.get("issue", {}).get("number")
+        if not pr_number:
+            return None
+            
+        level = None
+        if "level=1" in comment_body: level = 1
+        elif "level=2" in comment_body: level = 2
+        elif "level=3" in comment_body: level = 3
+        
+        return {
+            "type": "pull_request",
+            "owner": owner,
+            "repo": repo,
+            "pr_number": int(pr_number),
+            "action": "manual_trigger",
+            "head_sha": "",  # Will be fetched inside reviewer
+            "level": level
+        }
+
     pr_number = body.get("pull_request", {}).get("number")
     if not pr_number:
         return None
@@ -73,7 +99,7 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
     head_sha = body.get("pull_request", {}).get("head", {}).get("sha", "")
 
     # 合格的 event_payload：owner, repo, pr_number, action, head_sha
-    return {
+    payload = {
         "type": "pull_request",
         "owner": owner,
         "repo": repo,
@@ -81,6 +107,14 @@ def extract_pr_event(body: dict[str, Any], event: str) -> dict[str, Any] | None:
         "action": action,
         "head_sha": head_sha,
     }
+    
+    pr_body = body.get("pull_request", {}).get("body", "")
+    if pr_body:
+        if "/codemind level=1" in pr_body: payload["level"] = 1
+        elif "/codemind level=2" in pr_body: payload["level"] = 2
+        elif "/codemind level=3" in pr_body: payload["level"] = 3
+        
+    return payload
 
 
 @router.post("/api/v1/github/webhook")
