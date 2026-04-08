@@ -219,3 +219,28 @@ class GitHubProvider(GitProvider):
             raise GitHubAPIError(f"HTTPStatusError getting check runs: {e.response.status_code} - {e.response.text}") from e
         except Exception as e:
             raise GitHubAPIError(f"Error getting check runs: {e}") from e
+
+    async def get_pr_comments(self, owner: str, repo: str, pr_number: int) -> list[dict]:
+        """获取PR的所有评论
+        
+        Args:
+            owner: 仓库所有者
+            repo: 仓库名称
+            pr_number: PR编号
+            
+        Returns:
+            评论列表，每项包含id、body、user等信息
+            
+        Raises:
+            GitHubAPIError: GitHub API调用失败时抛出
+        """
+        url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=self._headers(), timeout=20.0)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise GitHubAPIError(f"HTTPStatusError getting PR comments: {e.response.status_code} - {e.response.text}") from e
+        except Exception as e:
+            raise GitHubAPIError(f"Error getting PR comments: {e}") from e

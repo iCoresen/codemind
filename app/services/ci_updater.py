@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from typing import Any
+import httpx  # 添加httpx导入
 
 from app.git_providers.github_provider import GitHubProvider
 from app.agents.result_aggregator import ResultAggregator
@@ -9,7 +10,7 @@ logger = logging.getLogger("codemind.ci_updater")
 
 class CIUpdaterService:
     """
-    负责查询 PR 的 CI (check_runs) 状态并以最佳格式追加到 CodeMind 评论中。
+    负责查询PR的CI (check_runs)状态并以最佳格式追加到CodeMind评论中。
     解耦了后台任务调度与呈现逻辑。
     """
     def __init__(self, github_provider: GitHubProvider):
@@ -19,18 +20,18 @@ class CIUpdaterService:
     async def execute(self, owner: str, repo: str, head_sha: str) -> None:
         """
         核心执行逻辑：
-        1. 通过 head_sha 查找关联的 PR。
-        2. 获取这个 sha 的全部 check_runs。
-        3. 如果还未全部完成，直接返回（等待下一个 check_run completed 事件）。
-        4. 如果完成，获取 CodeMind 发布的最后一条评论，并通过 aggregator 追加展示 CI 信息。
+        1. 通过head_sha查找关联的PR。
+        2. 获取这个sha的全部check_runs。
+        3. 如果还未全部完成，直接返回（等待下一个check_run completed事件）。
+        4. 如果完成，获取CodeMind发布的最后一条评论，并通过aggregator追加展示CI信息。
         """
-        # 1. 查找关联 PR
+        # 1. 查找关联PR
         prs = await self._get_prs_for_commit(owner, repo, head_sha)
         if not prs:
             logger.info("No PR found associated with commit %s", head_sha)
             return
 
-        # 2. 获取并过滤 linter 相关 check_runs
+        # 2. 获取并过滤linter相关check_runs
         check_runs = await self.provider.get_pr_check_runs(owner, repo, head_sha)
         relevant_checks = [
             c for c in check_runs
@@ -41,7 +42,7 @@ class CIUpdaterService:
             logger.info("No relevant linter CI checks found for %s/%s@%s", owner, repo, head_sha)
             return
 
-        # 只要还有在 pending 状态的，就退出等待下一个 webhook 触发
+        # 只要还有在pending状态的，就退出等待下一个webhook触发
         pending = any(check.get("status") != "completed" for check in relevant_checks)
         if pending:
             logger.info("Some CI checks are still pending, skipping update for now.")
@@ -52,7 +53,7 @@ class CIUpdaterService:
             for check in relevant_checks
         )
 
-        # 3. 为所有找到的 PR 更新评论
+        # 3. 为所有找到的PR更新评论
         for pr_data in prs:
             pr_number = pr_data.get("number")
             if not pr_number:
@@ -60,6 +61,7 @@ class CIUpdaterService:
 
             bot_comments = await self._get_bot_comments(owner, repo, pr_number)
             if not bot_comments:
+                logger.info("No CodeMind comments found for PR #%d", pr_number)
                 continue
 
             # 使用最新的一条评论追加
@@ -67,12 +69,12 @@ class CIUpdaterService:
             comment_id = latest_comment.get("id")
             current_body = latest_comment.get("body", "")
 
-            # 检查是否已经追加过（使用 ResultAggregator 统一判断机制）
+            # 检查是否已经追加过（使用ResultAggregator统一判断机制）
             if self.aggregator.has_ci_results(current_body):
                 logger.info("CI result already appended to PR #%d comment %d", pr_number, comment_id)
                 continue
 
-            # 通过 Aggregator 追加内容
+            # 通过Aggregator追加内容
             updated_body = self.aggregator.append_ci_results(current_body, relevant_checks, has_failures)
             
             # 发布更新
@@ -80,17 +82,22 @@ class CIUpdaterService:
             logger.info("Successfully appended CI results to PR #%d comment %d", pr_number, comment_id)
 
     async def _get_prs_for_commit(self, owner: str, repo: str, head_sha: str) -> list[dict[str, Any]]:
-        """获取与指定提交相关的 PR 列表"""
+        """获取与指定提交相关的PR列表"""
         try:
-            prs = await self.provider.client.get(f"/repos/{owner}/{repo}/commits/{head_sha}/pulls")
-            return prs.json()
+            # 使用正确的GitHub API调用方式
+            url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/pulls"
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=self.provider._headers(), timeout=20.0)
+                resp.raise_for_status()
+                return resp.json()
         except Exception as e:
             logger.error("Failed to get PRs for commit %s: %s", head_sha, e)
             return []
 
     async def _get_bot_comments(self, owner: str, repo: str, pr_number: int) -> list[dict[str, Any]]:
-        """获取由 CodeMind Bot 发布的评论"""
+        """获取由CodeMind Bot发布的评论"""
         try:
+            # 使用新添加的get_pr_comments方法
             comments = await self.provider.get_pr_comments(owner, repo, pr_number)
             return [c for c in comments if "CodeMind" in c.get("body", "")]
         except Exception as e:
