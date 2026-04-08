@@ -1,4 +1,4 @@
-.PHONY: install api cli test celery
+.PHONY: install api cli test arq
 
 install:
 	python -m pip install -r requirements.txt
@@ -12,5 +12,5 @@ cli:
 test:
 	python -m pytest tests/
 
-celery:
-	celery -A app.celery_app worker --loglevel=info
+arq:
+	arq -A app.arq_app worker --loglevel=info

@@ -43,11 +43,14 @@ def test_github_webhook_duplicate(mock_redis_set, mock_verify):
 
 @patch("app.github_webhook.verify_signature")
 @patch("app.github_webhook.redis_client.set", new_callable=AsyncMock)
-@patch("app.tasks.process_pr_review.delay")
-def test_github_webhook_success(mock_process_delay, mock_redis_set, mock_verify):
+@patch("app.github_webhook.create_pool", new_callable=AsyncMock)
+def test_github_webhook_success(mock_create_pool, mock_redis_set, mock_verify):
     mock_verify.return_value = True
     mock_redis_set.return_value = True  # Lock acquired
     
+    mock_pool = AsyncMock()
+    mock_create_pool.return_value = mock_pool
+
     body = {
         "action": "opened",
         "repository": {"full_name": "owner/repo"},
@@ -61,3 +64,4 @@ def test_github_webhook_success(mock_process_delay, mock_redis_set, mock_verify)
     res = client.post("/api/v1/github/webhook", json=body, headers=headers)
     assert res.status_code == 200
     assert "PR review deferred" in res.json()["message"]
+    mock_pool.enqueue_job.assert_called_once()

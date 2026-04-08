@@ -57,12 +57,12 @@ echo "设置PYTHONPATH: $PYTHONPATH"
 mkdir -p logs
 
 echo ""
-echo "1. 启动Celery Worker..."
-# 应用内部已配置将日志定性输出到 logs/celery.log，这里将 stdout/stderr 写入 logs/celery_stdout.log 避免日志重复
-nohup uv run celery -A app.celery_app worker --loglevel=info > logs/celery_stdout.log 2>&1 &
-CELERY_PID=$!
-echo "✓ Celery Worker已启动 (PID: $CELERY_PID)"
-echo $CELERY_PID > logs/celery.pid
+echo "1. 启动ARQ Worker..."
+# 应用内部已配置将日志定性输出到 logs/arq.log，这里将 stdout/stderr 写入 logs/arq_stdout.log 避免日志重复
+nohup uv run arq app.arq_app.WorkerSettings > logs/arq_stdout.log 2>&1 &
+ARQ_PID=$!
+echo "✓ ARQ Worker已启动 (PID: $ARQ_PID)"
+echo $ARQ_PID > logs/arq.pid
 
 echo ""
 echo "2. 启动FastAPI应用..."
@@ -113,7 +113,7 @@ echo "========================================"
 echo ""
 echo "服务状态:"
 echo "1. Redis:      ✓ 运行中"
-echo "2. Celery:     ✓ 运行中 (查看日志: tail -f logs/celery.log)"
+echo "2. ARQ:     ✓ 运行中 (查看日志: tail -f logs/arq.log)"
 echo "3. FastAPI:    ✓ 运行中 (PID: $FASTAPI_PID)"
 echo "4. ngrok:      ✓ 运行中 (PID: $NGROK_PID)"
 echo ""
@@ -126,10 +126,10 @@ echo "- 本地: curl http://localhost:8000/healthz"
 echo "- 公网: curl $NGROK_URL/healthz"
 echo ""
 echo "日志文件:"
-echo "- Celery日志:  logs/celery.log      (任务运行日志)"
+echo "- ARQ日志:  logs/arq.log      (任务运行日志)"
 echo "- FastAPI日志: logs/fastapi.log     (Web请求与路由日志)"
 echo "- ngrok日志:   logs/ngrok.log"
-echo "- 控制台输出:  logs/celery_stdout.log, logs/fastapi_stdout.log (崩溃或标准输出)"
+echo "- 控制台输出:  logs/arq_stdout.log, logs/fastapi_stdout.log (崩溃或标准输出)"
 echo ""
 echo "停止所有服务: ./scripts/stop_all.sh"
 echo "========================================"

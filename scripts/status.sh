@@ -14,11 +14,11 @@ else
 fi
 
 echo ""
-echo "2. Celery状态:"
-if [ -f logs/celery.pid ]; then
-    CELERY_PID=$(cat logs/celery.pid)
-    if kill -0 $CELERY_PID 2>/dev/null; then
-        echo "   ✓ 运行中 (PID: $CELERY_PID)"
+echo "2. ARQ状态:"
+if [ -f logs/arq.pid ]; then
+    ARQ_PID=$(cat logs/arq.pid)
+    if kill -0 $ARQ_PID 2>/dev/null; then
+        echo "   ✓ 运行中 (PID: $ARQ_PID)"
     else
         echo "   ✗ PID文件存在但进程未运行"
     fi

@@ -6,9 +6,10 @@ from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 import redis.asyncio as redis
+from arq import create_pool
+from arq.connections import RedisSettings
 
 from app.config import load_settings
-from app.tasks import process_pr_review
 from app.exceptions import WebhookValidationError
 
 logger = logging.getLogger("codemind.webhook")
@@ -102,9 +103,12 @@ async def github_webhook(
 
     logger.info("Processing event payload: %s", event_payload)
     
+    # 建立 arq pool
+    redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    arq_pool = await create_pool(redis_settings)
     
-    # 调用 Celery 任务，将含有 payload 和 锁信息 的字典推入队列
+    # 调用 ARQ 任务
     event_payload["lock_key"] = lock_key
-    process_pr_review.delay(event_payload)
+    await arq_pool.enqueue_job("process_pr_review", event_payload)
 
-    return {"accepted": True, "message": "PR review deferred to background task via Celery"}
+    return {"accepted": True, "message": "PR review deferred to background task via ARQ"}

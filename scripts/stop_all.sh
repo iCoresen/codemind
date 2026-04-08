@@ -30,16 +30,16 @@ if [ -f logs/ngrok.pid ]; then
     rm -f logs/ngrok.pid
 fi
 
-# 停止Celery Worker
-if [ -f logs/celery.pid ]; then
-    CELERY_PID=$(cat logs/celery.pid)
-    if kill -0 $CELERY_PID 2>/dev/null; then
-        kill $CELERY_PID
-        echo "✓ 已停止Celery Worker (PID: $CELERY_PID)"
+# 停止ARQ Worker
+if [ -f logs/arq.pid ]; then
+    ARQ_PID=$(cat logs/arq.pid)
+    if kill -0 $ARQ_PID 2>/dev/null; then
+        kill $ARQ_PID
+        echo "✓ 已停止ARQ Worker (PID: $ARQ_PID)"
     else
-        echo "Celery Worker进程已停止"
+        echo "ARQ Worker进程已停止"
     fi
-    rm -f logs/celery.pid
+    rm -f logs/arq.pid
 fi
 
 echo ""
