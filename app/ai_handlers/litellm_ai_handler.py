@@ -111,3 +111,21 @@ class LiteLLMAIHandler(BaseAIHandler):
             logger.error(f"Failed to generate async completion: {e}")
             raise AIProviderError(f"LiteLLM async completion error: {e}") from e
 
+    async def async_embedding(self, texts: list[str]) -> list[list[float]]:
+        from litellm import aembedding
+        try:
+            kwargs = self._get_litellm_kwargs()
+            # Try to use a specific embedding model if configured, otherwise fallback to a default
+            # Actually, let's just use text-embedding-3-small as a default or read from config if we add it later
+            embedding_model = getattr(self.settings, "ai_embedding_model", "text-embedding-3-small")
+            response = await aembedding(
+                model=embedding_model,
+                input=texts,
+                timeout=self.settings.ai_timeout,
+                **kwargs
+            )
+            return [data['embedding'] for data in response.data]
+        except Exception as e:
+            logger.error(f"Failed to generate async embedding: {e}")
+            raise AIProviderError(f"LiteLLM async embedding error: {e}") from e
+

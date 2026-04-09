@@ -177,6 +177,39 @@ class GitHubProvider(GitProvider):
         except Exception as e:
             raise GitHubAPIError(f"Error getting PR commits: {e}") from e
 
+    async def get_recent_commits(self, owner: str, repo: str, since: str = None) -> list[dict]:
+        """获取仓库最近的 commit 列表
+        
+        Args:
+            owner: 仓库所有者
+            repo: 仓库名称
+            since: 可选的时间字符串，格式如 2023-01-01T00:00:00Z
+            
+        Returns:
+            commit 列表
+        """
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits"
+        params = {"per_page": 100}
+        if since:
+            params["since"] = since
+            
+        try:
+            resp = await self._client.get(url, headers=self._headers(), params=params)
+            resp.raise_for_status()
+            commits = resp.json()
+            return [
+                {
+                    "sha": c.get("sha", "")[:8],
+                    "message": c.get("commit", {}).get("message", ""),
+                    "author": c.get("commit", {}).get("author", {}).get("name", ""),
+                }
+                for c in commits
+            ]
+        except httpx.HTTPStatusError as e:
+            raise GitHubAPIError(f"HTTPStatusError getting recent commits: {e.response.status_code} - {e.response.text}") from e
+        except Exception as e:
+            raise GitHubAPIError(f"Error getting recent commits: {e}") from e
+
     async def get_file_content(self, owner: str, repo: str, path: str, ref: str) -> str:
         """获取指定 ref（分支/commit SHA）下的文件内容
         
