@@ -19,6 +19,10 @@ from app.agents.base_agent import BaseAgent, AgentResult, AgentStatus
 from app.agents.agent_context import LogicAgentContext
 from app.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 from app.config import Settings
+from app.rag.embedding_service import EmbeddingService
+from app.rag.vector_store import ChromaVectorStore
+from app.rag.retriever import RAGRetriever
+from app.rag.evaluation import RAGEvaluator
 
 try:
     import tomllib
@@ -43,12 +47,33 @@ class LogicAgent(BaseAgent):
     fallback_message = "⚠️ 逻辑审查因超时跳过，建议人工关注核心变动的边界条件与异常处理。"
 
     def __init__(self, ai: LiteLLMAIHandler, settings: Settings, 
-                 soft_timeout: float = 15.0, hard_timeout: float = 25.0):
+                 soft_timeout: float = 15.0, hard_timeout: float = 25.0, enable_rag: bool = True):
         self.ai = ai
         self.settings = settings
         self.soft_timeout = soft_timeout
         self.hard_timeout = hard_timeout
         self.prompts_dir = Path(__file__).parent.parent / "prompts"
+        self.enable_rag = enable_rag
+        
+        if self.enable_rag:
+            try:
+                self.vector_store = ChromaVectorStore()
+                self.embedding_service = EmbeddingService(self.ai)
+                self.retriever = RAGRetriever(self.vector_store, self.embedding_service)
+                self.evaluator = RAGEvaluator()
+                # Initialize BM25 index on start for Hybrid search
+                from app.rag.knowledge_manager import KnowledgeManager
+                from app.rag.document_parser import DocumentParser
+                self.knowledge_manager = KnowledgeManager(self.vector_store, self.embedding_service, DocumentParser())
+                docs = self.knowledge_manager.load_all_docs_for_bm25()
+                if docs:
+                    self.retriever.build_bm25_index(docs)
+                else:
+                    self.enable_rag = False
+                    logger.warning("No docs found for Logic RAG, disabling Hybrid RAG features")
+            except Exception as e:
+                logger.error(f"Failed to initialize Logic RAG components: {e}")
+                self.enable_rag = False
 
     async def execute(self, context: LogicAgentContext) -> AgentResult:
         start_time = time.time()
@@ -66,6 +91,22 @@ class LogicAgent(BaseAgent):
                 prompts = tomllib.load(f)["pr_review_prompt"]
             
             system_prompt = prompts["system"]
+
+            if self.enable_rag:
+                try:
+                    query = f"{name} {pr.title} {pr.description}"
+                    retrieved_docs = await self.retriever.hybrid_search_docs(
+                        query=query[:200],
+                        top_k=2
+                    )
+                    
+                    if retrieved_docs:
+                        self.evaluator.evaluate_retrieval(query[:200], retrieved_docs, metadata={"agent": name})
+                        historical_rules = "\n".join([f"- {doc}" for doc in retrieved_docs])
+                        system_prompt += f"\n\n## 团队规范与历史文档参考 (RAG):\n{historical_rules}\n请务必参考并遵守以上规范。"
+                except Exception as e:
+                    logger.error(f"Hybrid search failed during {name} sub agent execution: {e}")
+
             user_prompt_template = Template(prompts["user"])
             user_prompt = user_prompt_template.render(
                 title=pr.title,
