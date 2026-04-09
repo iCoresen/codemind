@@ -77,6 +77,61 @@ cp .env.example .env
 - `DEFAULT_REVIEW_LEVEL`：可选，默认 `3`，指定 PR 审查层级（1/2/3）
 - `CORE_KEYWORDS`：可选，默认 `auth,payment,database`，核心链路关键字，一旦匹配则强制进入深度审查。
 
+## Docker 打包与部署
+
+项目已提供以下 Docker 文件：
+
+- `Dockerfile`：构建应用镜像（包含 API 与 Worker 运行依赖）
+- `docker-compose.yml`：编排 `api`、`worker`、`redis` 三个服务
+- `.dockerignore`：减少构建上下文，加速镜像构建
+
+部署步骤：
+
+1. 准备环境变量：
+
+```bash
+cp .env.example .env
+```
+
+2. 构建并启动（后台）：
+
+```bash
+docker compose up -d --build
+```
+
+3. 查看服务状态：
+
+```bash
+docker compose ps
+```
+
+4. 查看日志：
+
+```bash
+docker compose logs -f api
+docker compose logs -f worker
+```
+
+5. 健康检查：
+
+```bash
+curl http://127.0.0.1:8080/healthz
+```
+
+6. 停止并清理容器：
+
+```bash
+docker compose down
+```
+
+7. 若需要同时删除 Redis 数据卷：
+
+```bash
+docker compose down -v
+```
+
+说明：`docker-compose.yml` 已将容器内 `REDIS_URL` 覆盖为 `redis://redis:6379/0`，无需手动改 `.env` 的本地默认值。
+
 ## 方式一：CLI 触发评审
 
 执行：

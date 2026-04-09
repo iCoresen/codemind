@@ -30,3 +30,6 @@ secrets.ini
 config.ini
 *.key
 *.pem
+
+# Chroma vector database                                                                                                                                 
+data/chroma/

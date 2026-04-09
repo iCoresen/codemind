@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+logs/*
+data/chroma/*
+.env
+.env.*
+.vscode
+.aider*
