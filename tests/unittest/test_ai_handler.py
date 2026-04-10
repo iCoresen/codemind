@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock
 from app.config import Settings
 from app.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 
+
 @pytest.fixture
 def settings():
     return Settings(
@@ -24,15 +25,21 @@ def settings():
         logic_hard_timeout=25,
         unittest_soft_timeout=20,
         unittest_hard_timeout=30,
+        ai_embedding_model="fake_embedding_model",
+        default_review_level=3,
+        core_keywords=["auth", "payment", "database"],
     )
+
 
 @pytest.fixture
 def ai_handler(settings):
     return LiteLLMAIHandler(settings)
 
+
 def test_ai_handler_init(settings, ai_handler):
     assert ai_handler.settings.ai_model == "fake_model"
     assert os.environ.get("LITELLM_API_KEY") == "fake_key"
+
 
 @pytest.mark.asyncio
 @patch("app.ai_handlers.litellm_ai_handler.acompletion")
@@ -44,8 +51,10 @@ async def test_async_chat_completion(mock_acompletion, ai_handler):
     mock_response.choices[0].finish_reason = "stop"
     mock_acompletion.return_value = mock_response
 
-    content, finish_reason = await ai_handler.async_chat_completion("System prompt", "User prompt")
-    
+    content, finish_reason = await ai_handler.async_chat_completion(
+        "System prompt", "User prompt"
+    )
+
     assert content == "Mocked Async Response"
     assert finish_reason == "stop"
     mock_acompletion.assert_called_once()
