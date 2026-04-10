@@ -1,60 +1,65 @@
+# Docker Compose 配置文件 - 定义多容器应用
 services:
+  # Redis 服务：用于缓存和消息队列
   redis:
-    image: redis:7-alpine
-    container_name: codemind-redis
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    image: redis:7-alpine  # 使用 Redis 7 Alpine 版（轻量级）
+    container_name: codemind-redis  # 容器名称
+    restart: "no"  # 不自动重启
+    healthcheck:  # 健康检查配置
+      test: ["CMD", "redis-cli", "ping"]  # 使用 redis-cli ping 命令检查
+      interval: 10s  # 每10秒检查一次
+      timeout: 5s    # 超时时间5秒
+      retries: 5     # 重试5次
     volumes:
-      - redis-data:/data
+      - redis-data:/data  # 挂载持久化数据卷
 
+  # API 服务：主应用程序接口
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: codemind:latest
-    container_name: codemind-api
-    restart: unless-stopped
+    build:  # 从 Dockerfile 构建镜像
+      context: .  # 构建上下文为当前目录
+      dockerfile: Dockerfile  # 使用 Dockerfile 文件
+    image: codemind:latest  # 构建的镜像标签
+    container_name: codemind-api  # 容器名称
+    restart: "no"  # 不自动重启
     env_file:
-      - .env
+      - .env  # 从 .env 文件加载环境变量
     environment:
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
+      REDIS_URL: redis://redis:6379/0  # 设置 Redis 连接 URL（使用服务名 redis）
+    depends_on:  # 依赖关系
       redis:
-        condition: service_healthy
+        condition: service_healthy  # 等待 Redis 健康后才启动
     ports:
-      - "8080:8080"
-    volumes:
-      - ./logs:/app/logs
-      - ./data/chroma:/app/data/chroma
-    healthcheck:
+      - "8080:8080"  # 将容器 8080 端口映射到主机 8080 端口
+    volumes:  # 数据卷挂载
+      - ./logs:/app/logs  # 将主机 logs 目录挂载到容器
+      - ./data/chroma:/app/data/chroma  # 挂载 Chroma 向量数据库数据
+    healthcheck:  # API 健康检查
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    command: ["python", "-m", "app.main"]
+      interval: 30s  # 每30秒检查一次
+      timeout: 5s    # 超时时间5秒
+      retries: 3     # 重试3次
+      start_period: 20s  # 启动后等待20秒开始检查
+    command: ["python", "-m", "app.main"]  # 启动命令
 
+  # Worker 服务：异步任务处理
   worker:
-    image: codemind:latest
-    container_name: codemind-worker
-    restart: unless-stopped
+    image: codemind:latest  # 使用与 API 相同的镜像
+    container_name: codemind-worker  # 容器名称
+    restart: "no"  # 不自动重启
     env_file:
-      - .env
+      - .env  # 从 .env 文件加载环境变量
     environment:
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
+      REDIS_URL: redis://redis:6379/0  # 设置 Redis 连接 URL
+    depends_on:  # 依赖关系
       redis:
-        condition: service_healthy
+        condition: service_healthy  # 等待 Redis 健康
       api:
-        condition: service_started
-    volumes:
+        condition: service_started  # 等待 API 启动
+    volumes:  # 数据卷挂载（与 API 相同）
       - ./logs:/app/logs
       - ./data/chroma:/app/data/chroma
-    command: ["arq", "-A", "app.arq_app", "worker", "--loglevel=info"]
+    command: ["arq", "-A", "app.arq_app", "worker", "--loglevel=info"]  # 启动 arq 工作进程
 
+# 定义数据卷
 volumes:
-  redis-data:
+  redis-data:  # Redis 持久化数据卷
