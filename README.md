@@ -1,211 +1,255 @@
 # CodeMind
 
-CodeMind 是一个面向 GitHub Pull Request 的自动化代码审查服务，当前仓库版本支持：
+CodeMind 是一个面向 GitHub Pull Request 的**智能自动化代码审查服务**，采用分层架构和智能路由机制，为不同复杂度的 PR 提供精准的审查方案。
 
-1. 拉取 PR 元数据与文件级 Diff
-2. 使用 LiteLLM 调用模型进行并发审查
-3. 通过 Reducer 汇总审查结果并回写 PR 评论
-4. 支持 CLI 手动触发与 GitHub Webhook 触发（ARQ 异步）
+## ✨ 核心特性
 
-## 核心架构
+- **智能路由机制**: 根据 PR 特征自动选择审查级别（Level 1-3）
+- **渐进式交付**: 并发执行审查 Agent，按完成顺序增量更新评论
+- **RAG 知识库**: 集成向量检索，基于项目文档提供上下文感知审查
+- **优雅降级**: 超时控制和故障恢复机制
+- **多语言支持**: 基于 tree-sitter 的多语言 AST 分析
+- **容器化部署**: 完整的 Docker + Docker Compose 支持
 
-- `app/main.py`：FastAPI 服务入口
-- `app/github_webhook.py`：Webhook 接收、签名校验、Redis 去重锁、任务投递
-- `app/tasks.py`：ARQ 任务执行异步审查并释放锁
-- `app/tools/pr_reviewer.py`：审查主流程（Security/Performance/Style 并发 + Reducer 汇总）
-- `app/git_providers/github_provider.py`：GitHub API 访问
-- `app/ai_handlers/litellm_ai_handler.py`：LiteLLM 同步/异步调用封装
-- `app/algo/pr_processing.py`：Diff 过滤与截断策略
-- `app/algo/pr_router.py`：PR 动态分级路由策略
-- `app/prompts/*.toml`：各审查 Agent 与 Reducer 的提示词模板
+## 🏗️ 系统架构
 
-## 分级路由机制 (Routing Tier)
+### 分层架构设计
 
-系统内置了根据 PR 具体情况自动或经过用户干预来调度 Agent 执行的路由机制。这会大幅减少无效请求浪费的 Token 和运行时间，避免让大模型审查不必要的内容。调度方式基于以下层级：
-
-- **Level 1（快速通道）**：只运行 `ChangelogAgent`。当系统检测到变更仅包含纯文档或配置文件（如 `.md`, `.json`, `.css`, `.yaml`）时，自动判定为 Level 1。
-- **Level 2（日常小改动）**：运行 `ChangelogAgent` + `LogicAgent`。当总变更行数少于 50 行，并且没有触碰核心业务逻辑时，自动采用此层级，跳过深度测试。
-- **Level 3（深度审查）**：全量并行运行 `ChangelogAgent` + `LogicAgent` + `UnitTestAgent`。如果检测到代码变动涉及系统核心关键字（如包含 `auth`, `payment`, `database`），则无视行数自动升级到深度审查；或者当文件行数 > 50 所在的重构或重要组件改动。
-
-**如何自定义强制指定 Level？**
-
-你可以跳过自动判断，强制系统按照某个 Level 执行：
-
-- **通过 GitHub 评论指令：**在发起的 PR 内评论 `@codemind`/` /codemind level=1` 等（支持 1, 2, 3）。
-- **通过 CLI 参数指令**：运行 CLI 时追加 `--level` 参数，如 `python -m app.cli --pr_url xxx review --level 2`。
-
-## 运行前要求
-
-1. Python 3.11+
-2. 可访问 GitHub API
-3. 可访问模型服务（默认模型为 `deepseek/deepseek-chat`）
-4. 若使用 Webhook，需可用 Redis（用于 ARQ 与去重锁）
-
-## 安装依赖
-
-```bash
-python -m pip install -r requirements.txt
+```
+┌─────────────────────────────────────────────┐
+│              API 层 (FastAPI)               │
+│  • app/main.py - FastAPI 服务入口           │
+│  • app/github_webhook.py - Webhook 接收     │
+└─────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────┐
+│           异步任务层 (ARQ + Redis)           │
+│  • app/tasks.py - ARQ 异步审查任务          │
+│  • app/arq_app.py - ARQ 应用配置            │
+└─────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────┐
+│          审查编排层 (PRReviewer)             │
+│  • app/tools/pr_reviewer.py - 审查主流程    │
+│  • app/agents/* - 三大审查 Agent            │
+└─────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────┐
+│          算法处理层 (Algorithms)             │
+│  • app/algo/pr_router.py - 分级路由         │
+│  • app/algo/pr_processing.py - Diff 处理    │
+│  • app/algo/ast_analyzer.py - AST 分析      │
+└─────────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────────┐
+│          基础设施层 (Infrastructure)         │
+│  • app/git_providers/* - Git 提供者         │
+│  • app/ai_handlers/* - AI 模型调用          │
+│  • app/rag/* - RAG 知识库系统              │
+└─────────────────────────────────────────────┘
 ```
 
-或使用 Makefile：
+### 核心组件
+
+#### **审查 Agent 系统**
+- **ChangelogAgent** (`app/agents/changelog_agent.py`): 生成变更日志（极速层）
+- **LogicAgent** (`app/agents/logic_agent.py`): 逻辑审查（核心层） 
+- **UnitTestAgent** (`app/agents/unittest_agent.py`): 单元测试建议（深度层）
+- **ResultAggregator** (`app/agents/result_aggregator.py`): 结果聚合器
+- **TimeoutController** (`app/agents/timeout_controller.py`): 超时控制器
+
+#### **RAG 知识库系统**
+- **KnowledgeManager** (`app/rag/knowledge_manager.py`): 知识管理
+- **VectorStore** (`app/rag/vector_store.py`): ChromaDB 向量存储
+- **Retriever** (`app/rag/retriever.py`): 语义检索器
+- **EmbeddingService** (`app/rag/embedding_service.py`): 嵌入服务
+
+#### **智能路由系统**
+- **PRRouter** (`app/algo/pr_router.py`): 动态路由决策
+- **PRProcessing** (`app/algo/pr_processing.py`): Diff 预处理
+- **ASTAnalyzer** (`app/algo/ast_analyzer.py`): 代码结构分析
+
+## 🚦 智能路由机制
+
+系统根据 PR 特征自动选择最优审查级别，大幅减少无效请求的 Token 消耗和运行时间。
+
+### 路由决策逻辑
+
+| 级别 | 触发条件 | 执行的 Agent | 适用场景 |
+|------|----------|-------------|----------|
+| **Level 1** | 仅文档/配置文件变更（`.md`, `.json`, `.yaml`, `.css` 等） | `ChangelogAgent` | 文档更新、配置调整 |
+| **Level 2** | 变更行数 < 50 且不涉及核心业务逻辑 | `ChangelogAgent` + `LogicAgent` | 日常小改动、Bug 修复 |
+| **Level 3** | 变更行数 ≥ 50 **或** 涉及核心关键字（`auth`, `payment`, `database` 等） | 全量 Agent（Changelog + Logic + UnitTest） | 重大重构、核心功能开发 |
+
+### 手动指定级别
+
+跳过自动判断，强制指定审查级别：
+
+- **GitHub 评论指令**: 在 PR 内评论 `@codemind level=1`（支持 1, 2, 3）
+- **CLI 参数**: `python -m app.cli --pr_url <url> review --level 2`
+
+### 核心关键字配置
+通过环境变量 `CORE_KEYWORDS` 自定义核心业务关键字（默认：`auth,payment,database`）
+
+## 📋 系统要求
+
+### 环境要求
+- **Python**: 3.12+（通过 `.python-version` 指定）
+- **GitHub API**: 有效的 GitHub Token
+- **AI 模型服务**: 支持 LiteLLM 的模型服务（默认 `deepseek/deepseek-chat`）
+- **Redis**: Webhook 模式下用于 ARQ 任务队列和分布式锁
+- **ChromaDB**: RAG 知识库的向量存储（可选）
+
+### 技术栈
+- **后端框架**: FastAPI + Uvicorn
+- **异步任务**: ARQ + Redis
+- **AI 集成**: LiteLLM（支持多模型代理）
+- **向量数据库**: ChromaDB
+- **代码分析**: tree-sitter（多语言 AST 解析）
+- **依赖管理**: uv（通过 `pyproject.toml` 和 `uv.lock`）
+- **测试框架**: pytest + pytest-asyncio
+
+## 🚀 快速开始
+
+### 安装依赖
+
+项目使用 `uv` 进行依赖管理：
 
 ```bash
+# 使用 uv 安装依赖（推荐）
+uv sync
+
+# 或使用 Makefile
 make install
 ```
 
-## 环境变量
+### 环境配置
 
-先复制模板：
-
+1. 复制环境变量模板：
 ```bash
 cp .env.example .env
 ```
 
-当前代码实际读取的配置如下：
-
-- `GITHUB_TOKEN`：必填，用于读取 PR 与发布评论
-- `AI_API_KEY`：必填，LiteLLM 所用 API Key
-- `AI_BASE_URL`：可选，自定义模型网关地址
-- `AI_MODEL`：可选，默认 `deepseek/deepseek-chat`
-- `AI_FALLBACK_MODELS`：可选，逗号分隔的回退模型列表
-- `AI_TIMEOUT`：可选，默认 `60`
-- `GITHUB_WEBHOOK_SECRET`：可选，Webhook 签名密钥（为空则跳过校验）
-- `REDIS_URL`：可选，默认 `redis://localhost:6379/0`
-- `SERVER_HOST`：可选，默认 `0.0.0.0`
-- `SERVER_PORT`：可选，默认 `8080`
-- `LOG_LEVEL`：可选，默认 `INFO`
-- `DEFAULT_REVIEW_LEVEL`：可选，默认 `3`，指定 PR 审查层级（1/2/3）
-- `CORE_KEYWORDS`：可选，默认 `auth,payment,database`，核心链路关键字，一旦匹配则强制进入深度审查。
-
-## Docker 打包与部署
-
-项目已提供以下 Docker 文件：
-
-- `Dockerfile`：构建应用镜像（包含 API 与 Worker 运行依赖）
-- `docker-compose.yml`：编排 `api`、`worker`、`redis` 三个服务
-- `.dockerignore`：减少构建上下文，加速镜像构建
-
-部署步骤：
-
-1. 准备环境变量：
+2. 编辑 `.env` 文件，配置以下关键变量：
 
 ```bash
-cp .env.example .env
+# GitHub 配置
+GITHUB_TOKEN=your_github_personal_access_token
+
+# AI 模型配置
+AI_API_KEY=your_ai_api_key
+AI_BASE_URL=https://api.deepseek.com  # 可选，自定义网关
+AI_MODEL=deepseek/deepseek-chat       # 默认模型
+AI_FALLBACK_MODELS=gpt-3.5-turbo,claude-3-haiku  # 回退模型
+
+# 路由配置
+DEFAULT_REVIEW_LEVEL=3                # 默认审查级别
+CORE_KEYWORDS=auth,payment,database   # 核心业务关键字
+
+# Redis 配置（Webhook 模式必需）
+REDIS_URL=redis://localhost:6379/0
+
+# Webhook 安全
+GITHUB_WEBHOOK_SECRET=your_webhook_secret
 ```
 
-2. 构建并启动（后台）：
+## 🐳 Docker 部署
 
+项目提供完整的容器化部署方案：
+
+### 服务架构
+- **api**: FastAPI Webhook 接收服务
+- **worker**: ARQ 异步任务处理服务  
+- **redis**: 任务队列和分布式锁存储
+
+### 部署步骤
+
+1. **准备环境**：
+```bash
+cp .env.example .env
+# 编辑 .env 配置必要的环境变量
+```
+
+2. **构建并启动**：
 ```bash
 docker compose up -d --build
 ```
 
-3. 查看服务状态：
-
+3. **验证部署**：
 ```bash
+# 查看服务状态
 docker compose ps
-```
 
-4. 查看日志：
-
-```bash
+# 查看日志
 docker compose logs -f api
 docker compose logs -f worker
-```
 
-5. 健康检查：
-
-```bash
+# 健康检查
 curl http://127.0.0.1:8080/healthz
 ```
 
-6. 停止并清理容器：
-
+4. **停止服务**：
 ```bash
+# 停止容器
 docker compose down
-```
 
-7. 若需要同时删除 Redis 数据卷：
-
-```bash
+# 停止并清理数据卷
 docker compose down -v
 ```
 
-说明：`docker-compose.yml` 已将容器内 `REDIS_URL` 覆盖为 `redis://redis:6379/0`，无需手动改 `.env` 的本地默认值。
 
-## 方式一：CLI 触发评审
 
-执行：
+
+
+## 🔧 使用方式
+
+### 方式一：CLI 手动触发
 
 ```bash
+# 基本用法
 python -m app.cli --pr_url https://github.com/<owner>/<repo>/pull/<pr_number> review
-```
 
-或：
+# 指定审查级别
+python -m app.cli --pr_url <url> review --level 2
 
-```bash
+# 使用 Makefile（需自行补充参数）
 make cli
 ```
 
-说明：`make cli` 仅运行 `python -m app.cli`，需自行补充参数。
+**预期结果**：
+- 控制台输出：`Local review execution finished.`
+- PR 页面出现 `CodeMind PR Review` 评论
 
-预期结果：
+### 方式二：Webhook 自动触发
 
-- 控制台出现 `Local review execution finished.`
-- PR 下出现 `CodeMind PR Review` 评论
-
-兼容性提示：当前 `app/cli.py` 里还保留了旧字段 `DEEPSEEK_API_KEY` 的检查逻辑。若你仅配置了 `AI_API_KEY`，建议同时补一个同值环境变量 `DEEPSEEK_API_KEY` 作为临时兼容。
-
-## 方式二：Webhook + ARQ 异步触发
-
-1. 启动 Redis
-2. 启动 ARQ Worker：
-
+#### 1. 启动服务
 ```bash
+# 启动 Redis
+docker run -d -p 6379:6379 redis:alpine
+
+# 启动 ARQ Worker（处理异步任务）
 make arq
-```
 
-3. 启动 API：
-
-```bash
-python -m app.main
-```
-
-或：
-
-```bash
+# 启动 API 服务
 make api
 ```
 
-4. 健康检查：
+#### 2. 配置 GitHub Webhook
+- **Payload URL**: `http://<your-host>:8080/api/v1/github/webhook`
+- **Content type**: `application/json`
+- **Secret**: 与 `GITHUB_WEBHOOK_SECRET` 环境变量一致
+- **Events**: `Pull requests`（支持 `opened`, `reopened`, `synchronize`）
 
-```bash
-curl http://127.0.0.1:8080/healthz
+#### 3. 处理流程
+```
+Webhook 接收 → Redis 分布式锁去重 → ARQ 异步任务 → 发布评论 → 释放锁
 ```
 
-返回：
 
-```json
-{"ok": true}
-```
 
-5. GitHub Webhook 配置：
+### 本地调试 Webhook
 
-- Payload URL：`http://<your-host>:8080/api/v1/github/webhook`
-- Content type：`application/json`
-- Secret：与 `GITHUB_WEBHOOK_SECRET` 一致
-- Event：`Pull requests`
-
-支持动作：
-
-- `opened`
-- `reopened`
-- `synchronize`
-
-处理链路：Webhook 入站 -> Redis 分布式锁去重 -> ARQ 异步任务 -> 发布评论 -> 释放锁。
-
-## 本地调试 Webhook
-
-若未配置 `GITHUB_WEBHOOK_SECRET`，可本地直接请求：
+未配置 `GITHUB_WEBHOOK_SECRET` 时可直接测试：
 
 ```bash
 curl -X POST "http://127.0.0.1:8080/api/v1/github/webhook" \
@@ -218,38 +262,58 @@ curl -X POST "http://127.0.0.1:8080/api/v1/github/webhook" \
   }'
 ```
 
-## 测试
+## 🧪 测试
 
-运行全部单元测试：
-
+### 运行测试
 ```bash
+# 运行所有测试
 make test
-```
 
-或：
-
-```bash
+# 或直接使用 pytest
 python -m pytest tests/
+
+# 运行特定测试模块
+python -m pytest tests/unittest/test_reviewer.py
 ```
 
-当前测试覆盖重点：
+### 测试覆盖范围
+- **AI 处理器**: LiteLLM 同步/异步调用测试
+- **审查器**: 并发 Agent 执行与结果聚合
+- **Webhook**: 事件处理、去重锁、任务投递
+- **异步任务**: ARQ 任务执行与异常重试
+- **算法模块**: PR Diff 处理、路由决策、AST 分析
+- **RAG 系统**: 向量存储、检索、嵌入服务
 
-- LiteLLM Handler 的同步/异步调用
-- Reviewer 并发调用与汇总格式化
-- Webhook 事件提取、去重锁、任务投递
-- ARQ 任务执行与异常重试
-- PR Diff 处理与截断逻辑
+## ❓ 常见问题
 
-## 常见问题
+### 配置问题
+**Q: `GITHUB_TOKEN is not set`**
+A: 检查 `.env` 文件是否在项目根目录，并确认环境变量已正确加载。
 
-1. `GITHUB_TOKEN is not set`
-   检查 `.env` 是否生效，以及是否在项目根目录启动。
+**Q: GitHub API 返回 401/403 错误**
+A: 确认 GitHub Token 具有以下权限：`repo`（访问仓库）、`write:discussion`（发布评论）。
 
-2. GitHub 返回 401/403
-   检查 Token 权限是否包含读取 PR 与发布评论。
+**Q: Webhook 返回 `invalid signature`**
+A: 确保 GitHub Webhook Secret 与 `GITHUB_WEBHOOK_SECRET` 环境变量完全一致。
 
-3. Webhook 返回 `invalid signature`
-   检查 GitHub 端 Secret 与 `GITHUB_WEBHOOK_SECRET` 是否一致。
+### 运行问题
+**Q: ARQ Worker 没有处理任务**
+A: 检查 Redis 服务是否运行，`REDIS_URL` 配置正确，且 Worker 已成功启动。
 
-4. Worker 没有处理任务
-   检查 Redis 可达、`REDIS_URL` 配置正确，并确认 ARQ Worker 已启动。
+**Q: AI 模型调用失败**
+A: 验证 `AI_API_KEY` 和 `AI_BASE_URL` 配置，检查网络连接和模型服务状态。
+
+**Q: RAG 知识库无法加载**
+A: 确认 ChromaDB 服务可用，向量存储路径有读写权限。
+
+### 性能优化
+- **减少 Token 消耗**: 利用智能路由机制，避免不必要的深度审查
+- **提高响应速度**: 配置合适的超时时间，启用 Agent 并发执行
+- **内存管理**: 监控 Redis 和 ChromaDB 内存使用，适时清理缓存
+
+## 📚 相关文档
+
+- [API 文档](docs/) - 详细 API 接口说明
+- [模型配置指南](docs/changing_a_model.md) - 如何更换 AI 模型
+- [脚本说明](README_SCRIPTS.md) - 辅助脚本使用指南
+- [Makefile 命令](Makefile) - 常用开发命令
