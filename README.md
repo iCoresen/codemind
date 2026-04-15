@@ -5,7 +5,7 @@ CodeMind 是一个面向 GitHub Pull Request 的**智能自动化代码审查服
 ## ✨ 核心特性
 
 - **智能路由机制**: 根据 PR 特征自动选择审查级别（Level 1-3）
-- **渐进式交付**: 并发执行审查 Agent，按完成顺序增量更新评论
+- **多层次审查**: 三种审查深度，对应不同复杂度的代码变更
 - **RAG 知识库**: 集成向量检索，基于项目文档提供上下文感知审查
 - **优雅降级**: 超时控制和故障恢复机制
 - **多语言支持**: 基于 tree-sitter 的多语言 AST 分析
@@ -31,7 +31,7 @@ CodeMind 是一个面向 GitHub Pull Request 的**智能自动化代码审查服
 ┌─────────────────────────────────────────────┐
 │          审查编排层 (PRReviewer)             │
 │  • app/tools/pr_reviewer.py - 审查主流程    │
-│  • app/agents/* - 三大审查 Agent            │
+│  • app/reviewers/* - 多层次审查处理器       │
 └─────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────┐
@@ -51,12 +51,12 @@ CodeMind 是一个面向 GitHub Pull Request 的**智能自动化代码审查服
 
 ### 核心组件
 
-#### **审查 Agent 系统**
-- **ChangelogAgent** (`app/agents/changelog_agent.py`): 生成变更日志（极速层）
-- **LogicAgent** (`app/agents/logic_agent.py`): 逻辑审查（核心层） 
-- **UnitTestAgent** (`app/agents/unittest_agent.py`): 单元测试建议（深度层）
-- **ResultAggregator** (`app/agents/result_aggregator.py`): 结果聚合器
-- **TimeoutController** (`app/agents/timeout_controller.py`): 超时控制器
+#### **审查处理器**
+- **ChangelogReviewer** (`app/reviewers/changelog_reviewer.py`): 生成变更日志（轻量级审查）
+- **LogicReviewer** (`app/reviewers/logic_reviewer.py`): 逻辑与安全审查（核心审查）
+- **UnitTestReviewer** (`app/reviewers/unittest_reviewer.py`): 单元测试建议（深度审查）
+- **ResultAggregator** (`app/reviewers/result_aggregator.py`): 审查结果聚合
+- **TimeoutController** (`app/reviewers/timeout_controller.py`): 超时控制
 
 #### **RAG 知识库系统**
 - **KnowledgeManager** (`app/rag/knowledge_manager.py`): 知识管理
@@ -75,11 +75,11 @@ CodeMind 是一个面向 GitHub Pull Request 的**智能自动化代码审查服
 
 ### 路由决策逻辑
 
-| 级别 | 触发条件 | 执行的 Agent | 适用场景 |
-|------|----------|-------------|----------|
-| **Level 1** | 仅文档/配置文件变更（`.md`, `.json`, `.yaml`, `.css` 等） | `ChangelogAgent` | 文档更新、配置调整 |
-| **Level 2** | 变更行数 < 50 且不涉及核心业务逻辑 | `ChangelogAgent` + `LogicAgent` | 日常小改动、Bug 修复 |
-| **Level 3** | 变更行数 ≥ 50 **或** 涉及核心关键字（`auth`, `payment`, `database` 等） | 全量 Agent（Changelog + Logic + UnitTest） | 重大重构、核心功能开发 |
+| 级别 | 触发条件 | 审查深度 | 适用场景 |
+|------|----------|----------|----------|
+| **Level 1** | 仅文档/配置文件变更（`.md`, `.json`, `.yaml`, `.css` 等） | 轻量级 | 文档更新、配置调整 |
+| **Level 2** | 变更行数 < 50 且不涉及核心业务逻辑 | 核心审查 | 日常小改动、Bug 修复 |
+| **Level 3** | 变更行数 ≥ 50 **或** 涉及核心关键字（`auth`, `payment`, `database` 等） | 深度审查 | 重大重构、核心功能开发 |
 
 ### 手动指定级别
 
@@ -278,7 +278,7 @@ python -m pytest tests/unittest/test_reviewer.py
 
 ### 测试覆盖范围
 - **AI 处理器**: LiteLLM 同步/异步调用测试
-- **审查器**: 并发 Agent 执行与结果聚合
+- **审查器**: 多层次审查执行与结果聚合
 - **Webhook**: 事件处理、去重锁、任务投递
 - **异步任务**: ARQ 任务执行与异常重试
 - **算法模块**: PR Diff 处理、路由决策、AST 分析
@@ -308,7 +308,7 @@ A: 确认 ChromaDB 服务可用，向量存储路径有读写权限。
 
 ### 性能优化
 - **减少 Token 消耗**: 利用智能路由机制，避免不必要的深度审查
-- **提高响应速度**: 配置合适的超时时间，启用 Agent 并发执行
+- **提高响应速度**: 配置合适的超时时间，合理选择审查级别
 - **内存管理**: 监控 Redis 和 ChromaDB 内存使用，适时清理缓存
 
 ## 📚 相关文档

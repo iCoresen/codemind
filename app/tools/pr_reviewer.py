@@ -1,17 +1,18 @@
 """
 PR Reviewer - Orchestrator
 
-协调三大异构并发 Agent（Changelog, Logic, UnitTest）的执行，
+协调三大异构并发 Reviewer（Changelog, Logic, UnitTest）的执行，
 实现渐进式流式交付与优雅降级。
 
 核心流程：
 1. 并发获取 PR 数据（info, files, commits）
-2. 构建隔离上下文（每个 Agent 只获取所需数据）
+2. 构建隔离上下文（每个 Reviewer 只获取所需数据）
 3. 发布骨架评论（立即可见）
-4. 并发启动三大 Agent（各自带超时控制）
+4. 并发启动三大 Reviewer（各自带超时控制）
 5. 按完成顺序增量更新评论
 6. CI 轮询并最终更新
 """
+
 import logging
 import asyncio
 from pathlib import Path
@@ -22,18 +23,18 @@ from app.ai_handlers.litellm_ai_handler import LiteLLMAIHandler
 from app.algo.pr_processing import process_pr_files
 from app.algo.ast_analyzer import extract_changed_signatures_from_diff
 from app.algo.pr_router import determine_review_level
-from app.agents.agent_context import (
+from app.reviewers.reviewer_context import (
     PRContext,
-    LogicAgentContext,
-    ChangelogAgentContext,
-    UnitTestAgentContext,
+    LogicReviewerContext,
+    ChangelogReviewerContext,
+    UnitTestReviewerContext,
 )
-from app.agents.changelog_agent import ChangelogAgent
-from app.agents.logic_agent import LogicAgent
-from app.agents.unittest_agent import UnitTestAgent
-from app.agents.timeout_controller import TimeoutController
-from app.agents.result_aggregator import ResultAggregator
-from app.agents.base_agent import AgentResult
+from app.reviewers.changelog_reviewer import ChangelogReviewer
+from app.reviewers.logic_reviewer import LogicReviewer
+from app.reviewers.unittest_reviewer import UnitTestReviewer
+from app.reviewers.timeout_controller import TimeoutController
+from app.reviewers.result_aggregator import ResultAggregator
+from app.reviewers.base_reviewer import ReviewResult
 from app.exceptions import GitHubAPIError
 
 logger = logging.getLogger("codemind.reviewer")
@@ -42,9 +43,9 @@ logger = logging.getLogger("codemind.reviewer")
 class PRReviewer:
     """
     PR 审查编排器。
-    
+
     协调 Changelog（极速层）、Logic（核心层）、UnitTest（深度层）
-    三大 Agent 的并发执行，实现渐进式交付。
+    三大 Reviewer 的并发执行，实现渐进式交付。
     """
 
     def __init__(self, settings: Settings, event_payload: dict):
@@ -82,14 +83,16 @@ class PRReviewer:
         diff = process_pr_files(pr_files)
 
         # ── Phase 1.5: 动态评估路由层级 (Routing Tier) ──
-        review_level = determine_review_level(pr_files, self.settings.default_review_level, self.settings.core_keywords)
-        
+        review_level = determine_review_level(
+            pr_files, self.settings.default_review_level, self.settings.core_keywords
+        )
+
         # Override with explicit level set from CLI/Webhook if any
         if self.event_payload.get("level"):
             review_level = int(self.event_payload["level"])
-            
+
         logger.info(f"Determined Review Level: {review_level}")
-        
+
         # ── Phase 2: 构建隔离上下文 ──
         pr_ctx = PRContext(
             owner=owner,
@@ -101,20 +104,20 @@ class PRReviewer:
             head_sha=head_sha,
         )
 
-        changelog_ctx = ChangelogAgentContext(pr=pr_ctx, commits=commits)
-        logic_ctx = LogicAgentContext(pr=pr_ctx, diff=diff)
+        changelog_ctx = ChangelogReviewerContext(pr=pr_ctx, commits=commits)
+        logic_ctx = LogicReviewerContext(pr=pr_ctx, diff=diff)
 
-        # AST 签名提取（用于 UnitTest Agent）
+        # AST 签名提取（用于 UnitTest Reviewer）
         ast_signatures = await self._extract_ast_signatures(
             owner, repo, head_sha, pr_files, diff
         )
-        unittest_ctx = UnitTestAgentContext(
+        unittest_ctx = UnitTestReviewerContext(
             pr=pr_ctx, diff=diff, ast_signatures=ast_signatures
         )
 
         # ── Phase 3: 发布骨架评论 ──
         aggregator = ResultAggregator(self.github)
-        
+
         active_agents = []
         if review_level >= 1:
             active_agents.append("changelog")
@@ -122,7 +125,7 @@ class PRReviewer:
             active_agents.append("logic")
         if review_level >= 3:
             active_agents.append("unittest")
-            
+
         initial_comment = aggregator.build_initial_comment(pr_ctx, active_agents)
 
         try:
@@ -137,63 +140,71 @@ class PRReviewer:
             logger.error(f"Failed to publish skeleton comment: {e}")
             raise
 
-        # ── Phase 4: 并发启动三大 Agent ──
+        # ── Phase 4: 并发启动三大 Reviewer ──
         controller = TimeoutController()
-        
+
         tasks_to_wait = []
 
         if "changelog" in active_agents:
-            changelog_agent = ChangelogAgent(
+            changelog_reviewer = ChangelogReviewer(
                 ai=self.ai,
                 soft_timeout=self.settings.changelog_soft_timeout,
                 hard_timeout=self.settings.changelog_hard_timeout,
             )
             tasks_to_wait.append(
-                asyncio.create_task(controller.run_with_timeout(changelog_agent, changelog_ctx))
+                asyncio.create_task(
+                    controller.run_with_timeout(changelog_reviewer, changelog_ctx)
+                )
             )
-            
+
         if "logic" in active_agents:
-            logic_agent = LogicAgent(
+            logic_reviewer = LogicReviewer(
                 ai=self.ai,
                 settings=self.settings,
                 soft_timeout=self.settings.logic_soft_timeout,
                 hard_timeout=self.settings.logic_hard_timeout,
             )
             tasks_to_wait.append(
-                asyncio.create_task(controller.run_with_timeout(logic_agent, logic_ctx))
+                asyncio.create_task(
+                    controller.run_with_timeout(logic_reviewer, logic_ctx)
+                )
             )
-            
+
         if "unittest" in active_agents:
-            unittest_agent = UnitTestAgent(
+            unittest_reviewer = UnitTestReviewer(
                 ai=self.ai,
                 soft_timeout=self.settings.unittest_soft_timeout,
                 hard_timeout=self.settings.unittest_hard_timeout,
             )
             tasks_to_wait.append(
-                asyncio.create_task(controller.run_with_timeout(unittest_agent, unittest_ctx))
+                asyncio.create_task(
+                    controller.run_with_timeout(unittest_reviewer, unittest_ctx)
+                )
             )
 
         # ── Phase 5: 渐进式交付 - 按完成顺序增量更新 ──
         current_body = initial_comment
-        
+
         for coro in asyncio.as_completed(tasks_to_wait):
             try:
-                result: AgentResult = await coro
+                result: ReviewResult = await coro
                 logger.info(
-                    f"Agent '{result.agent_name}' completed with status "
+                    f"Reviewer '{result.reviewer_name}' completed with status "
                     f"{result.status.value} in {result.elapsed_seconds}s"
                 )
 
                 current_body = aggregator.update_section(
-                    current_body, result.agent_name, result
+                    current_body, result.reviewer_name, result
                 )
                 await aggregator.publish_update(owner, repo, comment_id, current_body)
 
             except Exception as e:
-                logger.error(f"Error processing agent result: {e}", exc_info=True)
+                logger.error(f"Error processing reviewer result: {e}", exc_info=True)
 
         # ── Phase 6: CI 结果更新已彻底解耦到 Webhook 回调机制中 ──
-        logger.info(f"PR Review for {owner}/{repo}#{pr_number} finished. CI results deferred to webhook.")
+        logger.info(
+            f"PR Review for {owner}/{repo}#{pr_number} finished. CI results deferred to webhook."
+        )
 
     async def _extract_ast_signatures(
         self,
@@ -205,7 +216,7 @@ class PRReviewer:
     ) -> str:
         """
         从 PR 变更文件中提取 AST 签名。
-        
+
         并发获取变更文件的源内容，然后通过 tree-sitter 解析。
         对获取失败的文件使用 diff 文本回退。
         """
@@ -246,7 +257,9 @@ class PRReviewer:
         await asyncio.gather(*[fetch_file(fp) for fp in target_files])
 
         if not file_contents:
-            logger.info("No file contents fetched for AST analysis, using diff fallback")
+            logger.info(
+                "No file contents fetched for AST analysis, using diff fallback"
+            )
 
         # 提取签名
         return extract_changed_signatures_from_diff(diff, file_contents)

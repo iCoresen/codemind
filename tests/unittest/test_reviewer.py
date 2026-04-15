@@ -4,7 +4,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 from app.config import Settings
 from app.tools.pr_reviewer import PRReviewer
-from app.agents.base_agent import AgentResult, AgentStatus
+from app.reviewers.base_reviewer import ReviewResult, ReviewerStatus
 
 
 @pytest.fixture
@@ -39,19 +39,19 @@ def event_payload():
 
 
 @pytest.mark.asyncio
-@patch("app.tools.pr_reviewer.ChangelogAgent")
-@patch("app.tools.pr_reviewer.LogicAgent")
-@patch("app.tools.pr_reviewer.UnitTestAgent")
+@patch("app.tools.pr_reviewer.ChangelogReviewer")
+@patch("app.tools.pr_reviewer.LogicReviewer")
+@patch("app.tools.pr_reviewer.UnitTestReviewer")
 @patch("app.tools.pr_reviewer.TimeoutController")
 @patch("app.tools.pr_reviewer.GitHubProvider")
 @patch.object(PRReviewer, "_extract_ast_signatures", new_callable=AsyncMock)
-async def test_run_multi_agent_concurrency(
+async def test_run_multi_reviewer_concurrency(
     mock_extract_ast,
     mock_github_provider,
     mock_timeout_controller,
-    mock_ut_agent,
-    mock_logic_agent,
-    mock_cl_agent,
+    mock_ut_reviewer,
+    mock_logic_reviewer,
+    mock_cl_reviewer,
     settings,
     event_payload,
 ):
@@ -81,15 +81,15 @@ async def test_run_multi_agent_concurrency(
     # Mock Timeout Controller
     mock_tc_instance = mock_timeout_controller.return_value
 
-    # We need the timeout controller to return mocked results based on the agent it gets
-    async def mock_run_with_timeout(agent, context):
-        if agent == mock_cl_agent.return_value:
-            return AgentResult("changelog", AgentStatus.COMPLETED, "CL Result", 1.0)
-        elif agent == mock_logic_agent.return_value:
-            return AgentResult("logic", AgentStatus.COMPLETED, "Logic Result", 2.0)
-        elif agent == mock_ut_agent.return_value:
-            return AgentResult("unittest", AgentStatus.COMPLETED, "UT Result", 3.0)
-        return AgentResult("unknown", AgentStatus.FAILED, "Error", 0)
+    # We need the timeout controller to return mocked results based on the reviewer it gets
+    async def mock_run_with_timeout(reviewer, context):
+        if reviewer == mock_cl_reviewer.return_value:
+            return ReviewResult("changelog", ReviewerStatus.COMPLETED, "CL Result", 1.0)
+        elif reviewer == mock_logic_reviewer.return_value:
+            return ReviewResult("logic", ReviewerStatus.COMPLETED, "Logic Result", 2.0)
+        elif reviewer == mock_ut_reviewer.return_value:
+            return ReviewResult("unittest", ReviewerStatus.COMPLETED, "UT Result", 3.0)
+        return ReviewResult("unknown", ReviewerStatus.FAILED, "Error", 0)
 
     mock_tc_instance.run_with_timeout = AsyncMock(side_effect=mock_run_with_timeout)
 
@@ -113,24 +113,24 @@ async def test_run_multi_agent_concurrency(
     # Verify the initial skeleton comment was published
     mock_gh_instance.publish_pr_comment.assert_called_once()
 
-    # Verify timeout controller was called for appropriate agents
+    # Verify timeout controller was called for appropriate reviewers
     # Based on determine_review_level logic: total_changes < 50 returns Level 2
-    # Level 2 activates changelog and logic agents only (not unittest)
+    # Level 2 activates changelog and logic reviewers only (not unittest)
     assert mock_tc_instance.run_with_timeout.call_count == 2
 
     # Verify incremental updates were pushed to GitHub
-    # With Level 2 review (changelog + logic agents), we expect at least 2 updates
+    # With Level 2 review (changelog + logic reviewers), we expect at least 2 updates
     assert mock_gh_instance.update_pr_comment.call_count >= 2
 
 
-def test_logic_agent_format_review_comment():
-    # Because we moved this function to logic_agent, we can test it directly there.
-    from app.agents.logic_agent import LogicAgent
+def test_logic_reviewer_format_review_comment():
+    # Because we moved this function to logic_reviewer, we can test it directly there.
+    from app.reviewers.logic_reviewer import LogicReviewer
     from unittest.mock import MagicMock
 
     settings = MagicMock()
     ai_handler = MagicMock()
-    agent = LogicAgent(ai_handler, settings)
+    reviewer = LogicReviewer(ai_handler, settings)
 
     raw_response = """```yaml
 final_review:
@@ -156,7 +156,7 @@ final_review:
         line: 10
 ```"""
 
-    formatted = agent._format_review_content(
+    formatted = reviewer._format_review_content(
         raw_response, "test_owner", "test_repo", "fake_sha"
     )
 

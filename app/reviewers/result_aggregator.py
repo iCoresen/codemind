@@ -2,7 +2,7 @@
 结果聚合器 - 策略二（渐进式流式交付）+ 策略四（增量合并）
 核心职责：
 1. 组装带占位符的初始评论模板（骨架评论）
-2. 监听 Agent 回调，增量替换占位符
+2. 监听 Reviewer 回调，增量替换占位符
 3. 通过 GitHub API 实时更新评论内容
 增量覆写机制：使用 HTML 注释锚点定位各模块区域，
 正则替换时只替换对应区域，保留已完成模块的内容。
@@ -10,16 +10,20 @@
 
 import re
 import logging
-from app.agents.base_agent import AgentResult, AgentStatus
-from app.agents.agent_context import PRContext
+from app.reviewers.base_reviewer import ReviewResult, ReviewerStatus
+from app.reviewers.reviewer_context import PRContext
 from app.git_providers.github_provider import GitHubProvider
+
 logger = logging.getLogger("codemind.aggregator")
+
+
 class ResultAggregator:
     """
     状态机合并器。
-    维护三大 Agent 的执行状态，通过 HTML 注释占位符
+    维护三大 Reviewer 的执行状态，通过 HTML 注释占位符
     实现增量更新 GitHub 评论。
     """
+
     # 占位符：HTML 注释 + 人类可读文本
     SECTION_START = "<!-- CODEMIND_{name}_START -->"
     SECTION_END = "<!-- CODEMIND_{name}_END -->"
@@ -38,27 +42,30 @@ class ResultAggregator:
         "logic": "⚠️ 逻辑审查因超时跳过，建议人工关注核心变动的边界条件与异常处理。",
         "unittest": "⚠️ 详细测试分析因超时跳过，建议关注核心变动的边界条件与异常抛出。",
     }
+
     def __init__(self, github: GitHubProvider):
         self.github = github
-        self._agent_statuses: dict[str, AgentStatus] = {
-            "changelog": AgentStatus.PENDING,
-            "logic": AgentStatus.PENDING,
-            "unittest": AgentStatus.PENDING,
+        self._reviewer_statuses: dict[str, ReviewerStatus] = {
+            "changelog": ReviewerStatus.PENDING,
+            "logic": ReviewerStatus.PENDING,
+            "unittest": ReviewerStatus.PENDING,
         }
+
     def _make_section(self, name: str, content: str) -> str:
         """构建带 HTML 注释锚点的模块区域"""
         start = self.SECTION_START.format(name=name.upper())
         end = self.SECTION_END.format(name=name.upper())
         title = self.SECTION_TITLES.get(name, name)
-        
+
         if name == "unittest":
             content = f"<details>\n<summary>点击展开/折叠</summary>\n\n{content}\n\n</details>"
-            
+
         return f"{start}\n### {title}\n\n{content}\n\n{end}"
+
     def build_initial_comment(self, pr_ctx: PRContext, active_agents: list[str]) -> str:
         """
         构建带占位符的骨架评论。
-        
+
         在所有 Agent 启动前立即发布，让用户知道审查已开始。
         """
         header = (
@@ -71,57 +78,59 @@ class ResultAggregator:
         for name in active_agents:
             pending_text = self.PENDING_TEXTS[name]
             sections.append(self._make_section(name, pending_text))
-        footer = (
-            "\n---\n"
-            "*🤖 Powered by CodeMind — 异构并发审查引擎*"
-        )
+        footer = "\n---\n*🤖 Powered by CodeMind — 异构并发审查引擎*"
         return header + "\n\n".join(sections) + footer
-    def update_section(self, comment_body: str, agent_name: str, result: AgentResult) -> str:
+
+    def update_section(
+        self, comment_body: str, reviewer_name: str, result: ReviewResult
+    ) -> str:
         """
-        用实际结果替换指定 Agent 的占位符区域。
-        
+        用实际结果替换指定 Reviewer 的占位符区域。
+
         使用正则匹配 HTML 注释锚点之间的内容进行替换，
         不影响其他已完成模块。
-        
+
         Args:
             comment_body: 当前评论完整内容
-            agent_name: Agent 名称 (changelog/logic/unittest)
-            result: Agent 执行结果
-            
+            reviewer_name: Reviewer 名称 (changelog/logic/unittest)
+            result: Reviewer 执行结果
+
         Returns:
             更新后的评论内容
         """
-        self._agent_statuses[agent_name] = result.status
+        self._reviewer_statuses[reviewer_name] = result.status
         # 根据状态确定显示内容
-        if result.status in (AgentStatus.COMPLETED, AgentStatus.SOFT_TIMEOUT):
+        if result.status in (ReviewerStatus.COMPLETED, ReviewerStatus.SOFT_TIMEOUT):
             display_content = result.content
-            # if result.status == AgentStatus.SOFT_TIMEOUT:
-            #     display_content += f"\n\n*⏱️ 该分析耗时 {result.elapsed_seconds}s（超过软超时阈值）*"
-        elif result.status == AgentStatus.DEGRADED:
-            display_content = self.DEGRADED_TEXTS.get(agent_name, result.content)
-        elif result.status == AgentStatus.FAILED:
+        elif result.status == ReviewerStatus.DEGRADED:
+            display_content = self.DEGRADED_TEXTS.get(reviewer_name, result.content)
+        elif result.status == ReviewerStatus.FAILED:
             display_content = (
-                f"⚠️ {self.SECTION_TITLES.get(agent_name, agent_name)} 分析失败。\n\n"
+                f"⚠️ {self.SECTION_TITLES.get(reviewer_name, reviewer_name)} 分析失败。\n\n"
                 f"错误信息: `{result.error}`"
             )
         else:
             display_content = result.content
         # 构建新的模块区域
-        new_section = self._make_section(agent_name, display_content)
+        new_section = self._make_section(reviewer_name, display_content)
         # 正则替换：匹配 START 到 END 之间的所有内容
-        start_marker = re.escape(self.SECTION_START.format(name=agent_name.upper()))
-        end_marker = re.escape(self.SECTION_END.format(name=agent_name.upper()))
+        start_marker = re.escape(self.SECTION_START.format(name=reviewer_name.upper()))
+        end_marker = re.escape(self.SECTION_END.format(name=reviewer_name.upper()))
         pattern = f"{start_marker}.*?{end_marker}"
         updated = re.sub(pattern, new_section, comment_body, flags=re.DOTALL)
         if updated == comment_body:
-            logger.warning(f"Failed to replace section for agent '{agent_name}' - markers not found")
+            logger.warning(
+                f"Failed to replace section for reviewer '{reviewer_name}' - markers not found"
+            )
         return updated
 
     def has_ci_results(self, comment_body: str) -> bool:
         """检查评论是否已经附加了 CI 结果（使用隐藏锚点校验防重）"""
         return "<!-- CODEMIND_CI_RESULTS -->" in comment_body
 
-    def append_ci_results(self, current_body: str, relevant_checks: list[dict], has_failures: bool) -> str:
+    def append_ci_results(
+        self, current_body: str, relevant_checks: list[dict], has_failures: bool
+    ) -> str:
         """将 CI 检查结果拼接到现有的 PR 评论末尾并打上防重锚点"""
         linter_output = []
         for check in relevant_checks:
@@ -139,17 +148,22 @@ class ResultAggregator:
                 f"**Summary:**\n{sn}\n\n**Details:**\n```text\n{txt}\n```\n</details>"
             )
 
-        header = "### ❌ 代码规范扫描未通过" if has_failures else "### ✅ 代码规范扫描通过"
-        
+        header = (
+            "### ❌ 代码规范扫描未通过" if has_failures else "### ✅ 代码规范扫描通过"
+        )
+
         # 使用锚点来防重
         marker = "<!-- CODEMIND_CI_RESULTS -->"
         final_append = f"\n\n---\n{marker}\n{header}\n" + "\n\n".join(linter_output)
-        
+
         return current_body + final_append
-    async def publish_update(self, owner: str, repo: str, comment_id: int, body: str) -> None:
+
+    async def publish_update(
+        self, owner: str, repo: str, comment_id: int, body: str
+    ) -> None:
         """
         通过 GitHub API 增量更新评论。
-        
+
         仅在内容变化时调用 API，避免不必要的请求。
         """
         try:

@@ -27,7 +27,7 @@ async def process_pr_review(ctx, event_payload: dict):
         if hasattr(redis_client, "aclose"):
             await redis_client.aclose()
         elif hasattr(redis_client, "close"):
-            await getattr(redis_client, "close")()
+            await redis_client.close()
 
 async def process_ci_result(ctx, event_payload: dict):
     logger.info("Starting async CI result processing via ARQ for payload: %s", event_payload)
