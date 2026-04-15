@@ -5,6 +5,47 @@ AST 解析器 - 使用 tree-sitter 进行代码结构提取
 提供精确的代码结构上下文，而非完整文件内容。
 
 支持语言: Python, JavaScript, TypeScript, Go, Java
+
+═══════════════════════════════════════════════════════════════════════════════
+                              整体架构图
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           调用入口分层                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ extract_signatures_from_source()                                 │    │
+│  │                                                                 │    │
+│  │   用途: 从完整源码中提取所有函数/类签名                            │    │
+│  │   策略: tree-sitter → 正则回退                                   │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                              │                                          │
+│                              ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ extract_changed_signatures_from_diff()                           │    │
+│  │                                                                 │    │
+│  │   用途: 基于变更精准提取相关代码片段                               │    │
+│  │   策略: 语义化切片（Python AST）→ 正则回退                        │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         三层降级策略（容错设计）                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  第1层: tree-sitter 解析（精准 AST）                                    │
+│         │ 失败                                                         │
+│         ▼                                                              │
+│  第2层: 正则回退（快速匹配）                                             │
+│         │ 失败                                                         │
+│         ▼                                                              │
+│  第3层: Diff 文本回退（最终保底）                                        │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
 """
 import logging
 import re
@@ -13,7 +54,31 @@ from pathlib import Path
 
 logger = logging.getLogger("codemind.ast")
 
-# tree-sitter 语言映射
+
+# ════════════════════════════════════════════════════════════════════════════
+# 第一节：配置区 - 语言映射表
+# ════════════════════════════════════════════════════════════════════════════
+#
+# 语言映射表定义了文件扩展名与 tree-sitter 语言模块的对应关系。
+#
+# 映射结构 (ext → (language_id, module_name)):
+#   - ext: 文件扩展名（小写，用于匹配）
+#   - language_id: tree-sitter 语言标识符，用于初始化 Parser
+#   - module_name: Python 模块名，用于 importlib 动态导入
+#
+# 支持的语言:
+#   ┌────────┬───────────────────┬─────────────────────────┐
+#   │  扩展名 │  语言标识符         │  tree-sitter 模块        │
+#   ├────────┼───────────────────┼─────────────────────────┤
+#   │  .py   │  python            │  tree_sitter_python     │
+#   │  .js   │  javascript        │  tree_sitter_javascript │
+#   │  .jsx  │  javascript        │  tree_sitter_javascript │
+#   │  .ts   │  typescript        │  tree_sitter_typescript │
+#   │  .tsx  │  typescript        │  tree_sitter_typescript │
+#   │  .go   │  go                │  tree_sitter_go         │
+#   │  .java │  java              │  tree_sitter_java       │
+#   └────────┴───────────────────┴─────────────────────────┘
+
 LANGUAGE_MAP = {
     ".py": ("python", "tree_sitter_python"),
     ".js": ("javascript", "tree_sitter_javascript"),
@@ -25,13 +90,47 @@ LANGUAGE_MAP = {
 }
 
 def _detect_language(filename: str) -> tuple[str, str] | None:
-    """检测文件语言和对应的 tree-sitter 模块名"""
+    """
+    根据文件名检测语言类型。
+    
+    Args:
+        filename: 源文件名（如 "foo.py", "bar.js"）
+        
+    Returns:
+        - 成功: (语言标识符, 模块名) 元组，如 ("python", "tree_sitter_python")
+        - 失败: None（不支持的语言）
+        
+    示例:
+        >>> _detect_language("test.py")
+        ('python', 'tree_sitter_python')
+        >>> _detect_language("test.txt")
+        None
+    """
     ext = Path(filename).suffix.lower()
     return LANGUAGE_MAP.get(ext)
 
 
 def _get_parser(language: str, module_name: str):
-    """获取对应语言的 tree-sitter parser"""
+    """
+    动态加载并初始化指定语言的 tree-sitter Parser。
+    
+    工作原理:
+    1. 使用 importlib 动态导入 tree_sitter_xxx 模块
+    2. 从模块中获取 language 对象（tree-sitter 预编译的语法定义）
+    3. 创建并返回 Parser 实例
+    
+    异常处理策略:
+    - ImportError: 语言包未安装，返回 (None, None) 实现优雅降级
+    - 其他异常: 初始化失败，同样返回 (None, None)
+    
+    Args:
+        language: 语言标识符（如 "python"）
+        module_name: Python 模块名（如 "tree_sitter_python"）
+        
+    Returns:
+        - 成功: (parser, lang) 元组
+        - 失败: (None, None)
+    """
     try:
         import tree_sitter
         import importlib
@@ -95,7 +194,33 @@ def _extract_from_tree(tree, source_code: str, language: str, filename: str) -> 
 
 
 def _walk_node(node, lines: list[str], language: str, signatures: list[str], depth: int):
-    """递归遍历 AST 节点，提取函数和类定义"""
+    """
+    递归遍历 AST 节点，提取函数和类定义。
+    
+    这是一个深度优先遍历（DFS）的实现。通过识别不同语言的 AST 节点类型，
+    提取对应的定义信息。
+    
+    节点类型映射表:
+    
+    ┌───────────────┬──────────────────────────────────────────────────────────┐
+    │ 语言           │ 识别的节点类型                                               │
+    ├───────────────┼──────────────────────────────────────────────────────────┤
+    │ python         │ function_definition, class_definition                      │
+    │ javascript     │ function_declaration, function, class_declaration,          │
+    │                │ method_definition                                         │
+    │ go             │ function_declaration, method_declaration,                  │
+    │                │ type_declaration                                          │
+    │ java           │ method_declaration, class_declaration,                     │
+    │                │ constructor_declaration                                   │
+    └───────────────┴──────────────────────────────────────────────────────────┘
+    
+    Args:
+        node: 当前遍历的 AST 节点
+        lines: 源代码行列表（索引=行号-1）
+        language: 语言标识符
+        signatures: 签名收集列表（in-place 修改）
+        depth: 当前递归深度（用于调试/日志）
+    """
     node_type = node.type
     
     # Python
@@ -202,7 +327,21 @@ def _fallback_extract(source_code: str, filename: str) -> str:
 
 def extract_changed_signatures_from_diff(diff: str, file_contents: dict[str, str]) -> str:
     """
-    基于变更依赖图（Change-Dependency Graph）的精准组装
+    基于变更依赖图（Change-Dependency Graph）的精准组装入口。
+    
+    这是本文件的核心功能之一，实现"精准代码切片"。
+    
+    语义切片的核心思想:
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │                                                                         │
+    │   Target Node (被修改的函数)         Dependency Signature (依赖签名)     │
+    │         │                                    │                          │
+    │         │         calls                       │                          │
+    │         ◀─────────────────────────────────────┘                          │
+    │                                                                         │
+    │   提取: 完整方法体                     提取: 仅签名（不含函数体）         │
+    │                                                                         │
+    └─────────────────────────────────────────────────────────────────────────┘
     
     Args:
         diff: process_pr_files 处理后的 Diff 文本
@@ -211,29 +350,47 @@ def extract_changed_signatures_from_diff(diff: str, file_contents: dict[str, str
     Returns:
         所有变更文件的语义化片段汇总（包含目标方法体及依赖签名，剔除噪音）
     """
-    # 这里模拟了语义化提取：
-    # 1. 从 diff 提取被修改的函数（确认为 Target Nodes）
-    # 2. 提取 Target Nodes 的完整方法体
-    # 3. 提取它们调用的依赖函数，只保留签名
-    # 为了简化，这段代码结合 diff 和 source code 做精确抽取
     
     all_context = []
     
+    # 遍历每个文件的源码，调用语义化切片核心逻辑
     for filepath, content in file_contents.items():
-        # 1 & 2. 真实实现应该是解析 Diff 行号，然后与 AST 节点交叉比对
-        # 提取目标函数体及上下文。目前由 _semantic_slice_extract 进行包裹
         slice_result = _semantic_slice_extract(content, filepath, diff)
         if slice_result:
             all_context.append(slice_result)
     
+    # 如果所有解析都失败，返回最简单的 diff 摘要
     if not all_context:
-        # 如果解析全部失败，返回简单的 diff 摘要
         return _extract_signatures_from_diff_text(diff)
     
     return "\n\n".join(all_context)
 
 def _parse_diff_added_lines(diff: str, target_filename: str) -> set[int]:
-    """从 diff 中提取特定文件新增或修改的行号"""
+    """
+    从 unified diff 格式中提取特定文件新增或修改的行号集合。
+    
+    Diff 格式示例:
+        --- a/foo.py              ← 旧文件
+        +++ b/foo.py              ← 新文件
+        @@ -10,5 +10,7 @@       ← 行号范围标记
+        -old line                 ← 删除的行
+        +new line                 ← 新增的行
+         unchanged                ← 上下文行
+    
+    解析规则:
+    1. "+++ b/path" → 记录当前处理的文件
+    2. "@@ +N, M @@" → 提取新文件起始行号 N
+    3. 以 "+" 开头的行（非 "+++"）→ 该行被新增/修改，计入 added_lines
+    4. "-" 开头的行（非 "---"）→ 不计入（行号计算基于新文件）
+    5. 其他行 → 行号递增
+    
+    Args:
+        diff: 完整的 unified diff 文本
+        target_filename: 目标文件名（用于过滤，只处理目标文件的变更）
+        
+    Returns:
+        新增/修改的行号集合（1-based，即从 1 开始计数）
+    """
     added_lines = set()
     current_file = None
     current_line_num = 0
@@ -258,39 +415,114 @@ def _parse_diff_added_lines(diff: str, target_filename: str) -> set[int]:
 
 def _semantic_slice_extract(source_code: str, filename: str, diff: str) -> str:
     """
-    语义化提取核心逻辑：
-    1. Python 文件使用 AST 工具精准判断修改所在节点
-    2. 其他文件暂时回退到简易正则实现
+    语义化提取的路由函数。
+    
+    根据文件类型选择合适的提取策略：
+    - Python: 使用 Python 内置 ast 模块（精准）
+    - 其他: 使用正则回退方案
+    
+    Args:
+        source_code: 源文件内容
+        filename: 文件名
+        diff: Diff 文本
+        
+    Returns:
+        语义化切片结果，或空字符串
     """
     if filename.endswith(".py"):
         return _semantic_slice_extract_python(source_code, filename, diff)
     else:
         return _semantic_slice_extract_fallback(source_code, filename, diff)
 
-import ast
-
 def _semantic_slice_extract_python(source_code: str, filename: str, diff: str) -> str:
+    """
+    Python 文件的语义化切片核心实现。
+    
+    使用 Python 内置 ast 模块实现"Change-Dependency Graph"（变更依赖图）。
+    
+    ══════════════════════════════════════════════════════════════════════════
+    Change-Dependency Graph 详解
+    ══════════════════════════════════════════════════════════════════════════
+    
+    核心问题: Diff 可能只修改了一个函数的某几行，如何知道:
+    - 哪个函数被修改了？（Target Node）
+    - 这个函数依赖哪些其他函数？（Dependency）
+    
+    解决方案: 两轮 AST 遍历
+    
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │ 第一轮: 寻找 Target Nodes（被修改的函数）                              │
+    │                                                                        │
+    │  1. _parse_diff_added_lines() 从 Diff 提取"+"的行号                   │
+    │  2. ast.parse() 解析源码成 AST                                         │
+    │  3. ast.walk() 遍历所有函数定义节点                                    │
+    │  4. 检查函数行范围是否与 added_lines 重叠                              │
+    │  5. 如果重叠 → 标记为 Target Node，提取完整方法体                       │
+    │  6. 遍历该函数内部的 ast.Call 节点，收集被调用函数名                    │
+    └────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │ 第二轮: 寻找 Dependency Signatures（被调用的函数签名）                  │
+    │                                                                        │
+    │  1. 遍历所有函数/类定义节点                                             │
+    │  2. 检查函数名是否在 target_deps 集合中                                │
+    │  3. 确认该函数没有被修改（不在 added_lines 中）                         │
+    │  4. 提取多行签名（从 def 行到函数体第一行之间）                         │
+    └────────────────────────────────────────────────────────────────────────┘
+    
+    Args:
+        source_code: Python 源文件内容
+        filename: 文件名
+        diff: Diff 文本
+        
+    Returns:
+        Markdown 格式的语义化切片结果
+    """
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # 预处理：解析 Diff 获取新增行号
+    # ─────────────────────────────────────────────────────────────────────────
     added_lines = _parse_diff_added_lines(diff, filename)
     if not added_lines:
         return ""
     
+    # 解析源码为 AST
     try:
         tree = ast.parse(source_code)
     except SyntaxError:
         return ""
         
     source_lines = source_code.split("\n")
-    target_nodes_code = []
-    target_deps = set()
+    target_nodes_code = []      # 存储 Target Node 的完整方法体
+    target_deps = set()         # 存储被调用的函数名集合
     
-    # 核心辅助函数：获取包含装饰器的真实起始行
+    # ══════════════════════════════════════════════════════════════════════════
+    # 辅助函数：获取包含装饰器的真实起始行
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # Python 中函数定义可能有多行签名和装饰器：
+    #
+    #   @decorator1
+    #   @decorator2
+    #   async def foo(              ← 函数定义行的 lineno 指向这里
+    #       param1: int,             ← 但装饰器在更前面
+    #       param2: str
+    #   ) -> None:
+    #
+    # 如果直接用 node.lineno，会丢失装饰器。
+    # 所以需要检查 decorator_list，使用最前面的装饰器行号。
+    
     def _get_true_start_line(node):
         if getattr(node, 'decorator_list', None):
             return node.decorator_list[0].lineno
         return getattr(node, 'lineno', -1)
 
-    # 第一次遍历：寻找精确的 Target Nodes（使用 ast.walk 支持嵌套内部类/方法）
-    # 策略：只关注函数/方法，忽略大类的整体变更，防止 Context 爆炸
+    # ══════════════════════════════════════════════════════════════════════════
+    # 第一轮遍历：寻找 Target Nodes（被修改的函数）
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # 策略：只关注函数/方法，忽略大类整体变更，防止 Context 爆炸
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             start = _get_true_start_line(node)
@@ -302,19 +534,27 @@ def _semantic_slice_extract_python(source_code: str, filename: str, diff: str) -
                 if not body_text:
                     continue
                 
+                # 添加到 Target Nodes 列表
                 target_nodes_code.append(
                     f"  - [Target Node Body] {node.__class__.__name__} `{node.name}`:\n```python\n{body_text}\n```"
                 )
                 
-                # 收集依赖：遍历该函数内部的所有调用
+                # 收集依赖：从该函数内部遍历所有 Call 节点
+                # 区分简单调用 foo() 和方法调用 obj.bar()
                 for child in ast.walk(node):
                     if isinstance(child, ast.Call):
                         if isinstance(child.func, ast.Name):
-                            target_deps.add(child.func.id)
+                            target_deps.add(child.func.id)        # foo()
                         elif isinstance(child.func, ast.Attribute):
-                            target_deps.add(child.func.attr)
+                            target_deps.add(child.func.attr)       # obj.bar()
 
-    # 第二次遍历：提取未被修改、但被 Target 调用的函数签名
+    # ══════════════════════════════════════════════════════════════════════════
+    # 第二轮遍历：提取 Dependency Signatures（被调用的函数签名）
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # 目的：提取被 Target 调用但自身没有被修改的函数签名
+    # 这样做是为了让 LLM 理解 Target 函数需要调用哪些其他函数
+    
     dependency_signatures = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -329,16 +569,18 @@ def _semantic_slice_extract_python(source_code: str, filename: str, diff: str) -
                     sig_lines = source_lines[start - 1 : body_start - 1]
                     sig_text = "\n".join(sig_lines).strip()
                     
-                    # 清理末尾冒号并做适度截断保护
+                    # 清理末尾冒号（多行签名的情况下可能有多个冒号）
                     if sig_text.endswith(":"):
                         sig_text = sig_text[:-1].strip()
+                    
+                    # 截断保护，避免输出过长
                     if len(sig_text) > 300:
                         sig_text = sig_text[:300] + "\n    ...[Truncated]"
                         
                     dependency_signatures.append(f"  - [Dependency Signature] `{node.name}`:\n```python\n{sig_text}\n```")
                     
-                    # 避免类名或函数名重复添加
-                    target_deps.remove(node.name) 
+                    # 从集合中移除，避免重复处理
+                    target_deps.remove(node.name)
 
     if not target_nodes_code and not dependency_signatures:
         return ""
