@@ -13,6 +13,8 @@ class Settings:
     ai_base_url: str
     ai_model: str
     ai_embedding_model: str
+    ai_embedding_api_key: str
+    ai_embedding_base_url: str
     ai_fallback_models: str
     ai_timeout: int
     server_host: str
@@ -35,7 +37,9 @@ def load_settings() -> Settings:
         ai_api_key=os.getenv("AI_API_KEY", ""),
         ai_base_url=os.getenv("AI_BASE_URL", ""),
         ai_model=os.getenv("AI_MODEL", "deepseek/deepseek-chat"),
-        ai_embedding_model=os.getenv("AI_EMBEDDING_MODEL", "text-embedding-3-small"),
+        ai_embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        ai_embedding_api_key=os.getenv("EMBEDDING_API_KEY", ""),
+        ai_embedding_base_url=os.getenv("EMBEDDING_BASE_URL", ""),
         ai_fallback_models=os.getenv("AI_FALLBACK_MODELS", ""),
         ai_timeout=int(os.getenv("AI_TIMEOUT", "60")),
         server_host=os.getenv("SERVER_HOST", "0.0.0.0"),

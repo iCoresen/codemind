@@ -7,6 +7,35 @@ from app.rag.embedding_service import EmbeddingService
 from app.rag.vector_store import ChromaVectorStore
 from app.rag.evaluation import RAGEvaluator
 from app.rag.retriever import RAGRetriever
+from app.config import Settings
+
+
+@pytest.fixture
+def settings():
+    return Settings(
+        github_token="fake_token",
+        ai_api_key="fake_key",
+        ai_base_url="https://fake.api.com",
+        ai_model="fake_model",
+        ai_embedding_model="fake_embedding_model",
+        ai_embedding_api_key="fake_embedding_key",
+        ai_embedding_base_url="https://fake.embedding.api.com",
+        ai_fallback_models="fake_fallback",
+        ai_timeout=30,
+        github_webhook_secret="fake_secret",
+        server_host="0.0.0.0",
+        server_port=8080,
+        log_level="INFO",
+        redis_url="redis://localhost:6379/0",
+        changelog_soft_timeout=5,
+        changelog_hard_timeout=10,
+        logic_soft_timeout=15,
+        logic_hard_timeout=25,
+        unittest_soft_timeout=20,
+        unittest_hard_timeout=30,
+        default_review_level=3,
+        core_keywords=["auth", "payment", "database"],
+    )
 
 
 @pytest.fixture
@@ -22,8 +51,8 @@ def mock_ai_handler():
 
 
 @pytest.fixture
-def embedding_service(mock_ai_handler):
-    return EmbeddingService(mock_ai_handler)
+def embedding_service(mock_ai_handler, settings):
+    return EmbeddingService(mock_ai_handler, settings)
 
 
 @pytest.fixture
@@ -100,7 +129,12 @@ class TestEmbeddingService:
 
         assert len(result) == 2
         assert result[0] == [0.1, 0.2, 0.3]
-        mock_ai_handler.async_embedding.assert_called_once_with(texts)
+        mock_ai_handler.async_embedding.assert_called_once_with(
+            texts,
+            model="fake_embedding_model",
+            api_key="fake_embedding_key",
+            base_url="https://fake.embedding.api.com",
+        )
 
     @pytest.mark.asyncio
     async def test_get_embeddings_empty(self, embedding_service):
@@ -173,7 +207,7 @@ class TestRAGEvaluator:
 
 class TestRAGRetriever:
     @pytest.fixture
-    def retriever(self, mock_vector_store, embedding_service):
+    def retriever(self, mock_vector_store, embedding_service, settings):
         return RAGRetriever(mock_vector_store, embedding_service)
 
     def test_init(self, retriever, mock_vector_store, embedding_service):

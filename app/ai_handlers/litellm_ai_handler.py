@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Tuple
+from typing import Tuple, Optional
 
 from litellm import completion, acompletion
 
@@ -87,6 +87,27 @@ class LiteLLMAIHandler(BaseAIHandler):
             kwargs["fallbacks"] = parsed_fallbacks
         return kwargs
 
+    def _get_embedding_kwargs(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> dict:
+        """构建 embedding 调用参数，优先使用传入的独立配置"""
+        kwargs = {}
+        
+        # 优先使用独立的 embedding 配置
+        if base_url:
+            kwargs["api_base"] = base_url
+        elif self.settings.ai_embedding_base_url:
+            kwargs["api_base"] = self.settings.ai_embedding_base_url
+            
+        if api_key:
+            kwargs["api_key"] = api_key
+        elif self.settings.ai_embedding_api_key:
+            kwargs["api_key"] = self.settings.ai_embedding_api_key
+            
+        return kwargs
+
     async def async_chat_completion(
         self, system: str, user: str, temperature: float = 0.2
     ) -> Tuple[str, str]:
@@ -111,13 +132,17 @@ class LiteLLMAIHandler(BaseAIHandler):
             logger.error(f"Failed to generate async completion: {e}")
             raise AIProviderError(f"LiteLLM async completion error: {e}") from e
 
-    async def async_embedding(self, texts: list[str]) -> list[list[float]]:
+    async def async_embedding(
+        self,
+        texts: list[str],
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> list[list[float]]:
         from litellm import aembedding
         try:
-            kwargs = self._get_litellm_kwargs()
-            # Try to use a specific embedding model if configured, otherwise fallback to a default
-            # Actually, let's just use text-embedding-3-small as a default or read from config if we add it later
-            embedding_model = getattr(self.settings, "ai_embedding_model", "text-embedding-3-small")
+            kwargs = self._get_embedding_kwargs(api_key=api_key, base_url=base_url)
+            embedding_model = model or self.settings.ai_embedding_model
             response = await aembedding(
                 model=embedding_model,
                 input=texts,

@@ -12,6 +12,9 @@ def settings():
         ai_api_key="fake_key",
         ai_model="fake_model",
         ai_base_url="https://fake.api.com",
+        ai_embedding_model="fake_embedding_model",
+        ai_embedding_api_key="fake_embedding_key",
+        ai_embedding_base_url="https://fake.embedding.api.com",
         ai_fallback_models="fake_fallback",
         ai_timeout=30,
         github_webhook_secret="fake_secret",
@@ -25,7 +28,6 @@ def settings():
         logic_hard_timeout=25,
         unittest_soft_timeout=20,
         unittest_hard_timeout=30,
-        ai_embedding_model="fake_embedding_model",
         default_review_level=3,
         core_keywords=["auth", "payment", "database"],
     )
