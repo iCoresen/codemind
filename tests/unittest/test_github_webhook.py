@@ -38,10 +38,12 @@ def test_extract_issue_comment_event():
     assert extracted["head_sha"] == ""
 
 @patch("app.github_webhook.verify_signature")
-@patch("app.github_webhook.redis_client.set", new_callable=AsyncMock)
-def test_github_webhook_duplicate(mock_redis_set, mock_verify):
+@patch("app.github_webhook.get_redis")
+def test_github_webhook_duplicate(mock_get_redis, mock_verify):
     mock_verify.return_value = True
-    mock_redis_set.return_value = None  # Lock taken
+    mock_redis = AsyncMock()
+    mock_redis.set.return_value = None  # Lock taken
+    mock_get_redis.return_value = mock_redis
     
     body = {
         "action": "opened",
@@ -58,14 +60,16 @@ def test_github_webhook_duplicate(mock_redis_set, mock_verify):
     assert res.json() == {"accepted": True, "reason": "Duplicate webhook running or already processed"}
 
 @patch("app.github_webhook.verify_signature")
-@patch("app.github_webhook.redis_client.set", new_callable=AsyncMock)
-@patch("app.github_webhook.create_pool", new_callable=AsyncMock)
-def test_github_webhook_success(mock_create_pool, mock_redis_set, mock_verify):
+@patch("app.github_webhook.get_redis")
+@patch("app.github_webhook.get_arq_pool")
+def test_github_webhook_success(mock_get_arq_pool, mock_get_redis, mock_verify):
     mock_verify.return_value = True
-    mock_redis_set.return_value = True  # Lock acquired
-    
+    mock_redis = AsyncMock()
+    mock_redis.set.return_value = True  # Lock acquired
+    mock_get_redis.return_value = mock_redis
+
     mock_pool = AsyncMock()
-    mock_create_pool.return_value = mock_pool
+    mock_get_arq_pool.return_value = mock_pool
 
     body = {
         "action": "opened",
