@@ -33,3 +33,4 @@ config.ini
 
 # Chroma vector database                                                                                                                                 
 data/chroma/
+data/test_rag_integration/chroma/chroma.sqlite3
