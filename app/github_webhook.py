@@ -4,10 +4,8 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Header, HTTPException, Request
 import redis.asyncio as redis
-from arq import create_pool
-from arq.connections import RedisSettings
 
 from app.config import load_settings
 from app.exceptions import WebhookValidationError
@@ -16,7 +14,26 @@ logger = logging.getLogger("codemind.webhook")
 router = APIRouter()
 settings = load_settings()
 
-redis_client = redis.from_url(settings.redis_url)
+# 全局连接池，由 main.py 的 lifespan 管理
+_redis_client: redis.Redis | None = None
+_arq_pool: Any | None = None
+
+
+def init_pools(redis_client: redis.Redis, arq_pool: Any):
+    """由 main.py 调用，初始化全局连接池"""
+    global _redis_client, _arq_pool
+    _redis_client = redis_client
+    _arq_pool = arq_pool
+
+
+def get_redis() -> redis.Redis:
+    """获取全局 Redis 客户端"""
+    return _redis_client
+
+
+def get_arq_pool() -> Any:
+    """获取全局 ARQ 连接池"""
+    return _arq_pool
 
 def verify_signature(raw_body: bytes, signature_256: str | None, secret: str) -> bool:
     if not secret:
@@ -167,17 +184,16 @@ async def github_webhook(
         pr_number = event_payload["pr_number"]
         lock_key = f"codemind:pr_lock:{owner}:{repo}:{pr_number}:{head_sha}"
         logger.info(f"PR事件锁键: {lock_key}")
-        
+
+        redis_client = get_redis()
         is_locked = await redis_client.set(lock_key, "locked", ex=600, nx=True)
         if not is_locked:
             logger.warning(f"重复的webhook或正在处理中: {lock_key}, 忽略")
             return {"accepted": True, "reason": "Duplicate webhook running or already processed"}
 
         logger.info("处理PR事件payload: %s", event_payload)
-        
-        redis_settings = RedisSettings.from_dsn(settings.redis_url)
-        arq_pool = await create_pool(redis_settings)
-        
+
+        arq_pool = get_arq_pool()
         event_payload["lock_key"] = lock_key
         await arq_pool.enqueue_job("process_pr_review", event_payload)
         logger.info("PR审查任务已加入ARQ队列")
@@ -187,22 +203,20 @@ async def github_webhook(
     elif event_type == "check_run":
         lock_key = f"codemind:ci_lock:{owner}:{repo}:{head_sha}"
         logger.info(f"CI事件锁键: {lock_key}")
-        
+
+        redis_client = get_redis()
         is_locked = await redis_client.set(lock_key, "locked", ex=120, nx=True)
         if not is_locked:
             logger.warning(f"重复的check_run webhook或正在处理中: {lock_key}, 忽略")
             return {"accepted": True, "reason": "Duplicate webhook running"}
 
         logger.info("处理check_run事件payload: %s", event_payload)
-        
-        redis_settings = RedisSettings.from_dsn(settings.redis_url)
-        arq_pool = await create_pool(redis_settings)
-        
+
+        arq_pool = get_arq_pool()
         event_payload["lock_key"] = lock_key
-        # We will enqueue this as a new job for ARQ to process
         await arq_pool.enqueue_job("process_ci_result", event_payload, _defer_by=5)
         logger.info("CI结果处理任务已加入ARQ队列，延迟5秒")
-        
+
         return {"accepted": True, "message": "CI result process deferred to ARQ"}
 
     logger.warning(f"未处理的事件类型: {event_type}")
