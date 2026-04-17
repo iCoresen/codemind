@@ -118,7 +118,7 @@ class RAGIntegrationTester:
         )
 
         # 初始化 GitHub Provider
-        self.github_provider = GitHubProvider(self.settings)
+        self.github_provider = GitHubProvider(self.settings.github_token)
 
         # 初始化 GitHub Data Collector
         self.github_collector = GitHubDataCollector(
@@ -297,14 +297,18 @@ class RAGIntegrationTester:
                 })
                 continue
 
-            # 检查是否命中期望的文档
+            # 检查是否命中期望的文档 (需要规范化路径进行匹配)
             retrieved_sources = [
                 r.get("metadata", {}).get("source", "")
                 for r in retrieved
             ]
+            # 规范化路径：提取文件名用于匹配
+            # e.g., "./README.md" -> "README.md", "docs/changing_a_model.md" -> "changing_a_model.md"
+            normalized_retrieved = set(os.path.basename(src) for src in retrieved_sources)
+            # 检查每个期望的来源是否在检索结果中 (去重后)
             hits = [
-                src for src in retrieved_sources
-                if src in case["expected_sources"]
+                src for src in case["expected_sources"]
+                if src in normalized_retrieved
             ]
             hit_rate = len(hits) / len(case["expected_sources"]) if case["expected_sources"] else 0
 
@@ -452,7 +456,7 @@ async def main():
     tester = RAGIntegrationTester()
 
     # 可以通过环境变量指定测试的仓库
-    owner = os.getenv("TEST_GITHUB_OWNER", "Coresen")
+    owner = os.getenv("TEST_GITHUB_OWNER", "iCoresen")
     repo = os.getenv("TEST_GITHUB_REPO", "codemind")
 
     await tester.run_all_tests(owner=owner, repo=repo)
@@ -467,6 +471,6 @@ if __name__ == "__main__":
 async def test_rag_full_integration():
     """完整的 RAG 集成测试 (供 pytest 调用)"""
     tester = RAGIntegrationTester()
-    owner = os.getenv("TEST_GITHUB_OWNER", "Coresen")
+    owner = os.getenv("TEST_GITHUB_OWNER", "iCoresen")
     repo = os.getenv("TEST_GITHUB_REPO", "codemind")
     await tester.run_all_tests(owner=owner, repo=repo)
