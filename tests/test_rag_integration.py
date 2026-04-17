@@ -76,7 +76,7 @@ class RAGIntegrationTester:
             ai_api_key=os.getenv("AI_API_KEY", ""),
             ai_base_url=os.getenv("AI_BASE_URL", ""),
             ai_model=os.getenv("AI_MODEL", "deepseek/deepseek-chat"),
-            ai_embedding_model="text-embedding-3-small",
+            ai_embedding_model=os.getenv("EMBEDDING_MODEL", "openai/BAAI/bge-m3"),
             ai_embedding_api_key=os.getenv("EMBEDDING_API_KEY", ""),
             ai_embedding_base_url=os.getenv("EMBEDDING_BASE_URL", ""),
             ai_fallback_models=os.getenv("AI_FALLBACK_MODELS", ""),

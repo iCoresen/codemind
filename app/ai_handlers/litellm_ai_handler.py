@@ -142,6 +142,8 @@ class LiteLLMAIHandler(BaseAIHandler):
         from litellm import aembedding
         try:
             kwargs = self._get_embedding_kwargs(api_key=api_key, base_url=base_url)
+            # Fix: explicitly using 'float' to avoid litellm sending 'null' which breaks some providers like SiliconFlow
+            kwargs.setdefault("encoding_format", "float")
             embedding_model = model or self.settings.ai_embedding_model
             response = await aembedding(
                 model=embedding_model,
