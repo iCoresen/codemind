@@ -234,19 +234,6 @@ class LogicReviewer(BaseReviewer):
             f"{reviewer_results['style']}\n"
         )
 
-        return self._make_result(AgentStatus.FAILED, self.fallback_message, start_time)
-
-    def _build_fallback_content(self, agent_results: dict) -> str:
-        """当 Reducer 失败时，直接拼接子 Agent 原始结果"""
-        return (
-            "**⚠️ Reducer 格式化失败，展示各层原始输出：**\n\n"
-            "#### 🔒 Security Analysis\n"
-            f"{agent_results['security']}\n\n"
-            "#### ⚡ Performance Analysis\n"
-            f"{agent_results['performance']}\n\n"
-            "#### 🎨 Style Analysis\n"
-            f"{agent_results['style']}\n"
-        )
 
     def _format_review_content(
         self, ai_response: str, owner: str, repo: str, head_sha: str
